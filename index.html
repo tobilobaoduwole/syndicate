@@ -59,14 +59,6 @@
 const { useState, useEffect, useMemo, useRef } = React;
 /* ============================================================
    THE SYNDICATE — Event Management Application (v5)
-   v5 fixes:
-   • RSVP overwrite bug fixed (hydrate-from-cloud before any push)
-   • Public "Reserve your seat" + "Enter code" buttons now work
-   • Access control: public sees Home/RSVP/Player only; operator tabs
-     (Admin/GM/Scorekeeper/Scoreboard) hidden behind a "· staff" PIN login
-   • Admin: Start/End TIME pickers (auto-builds the time label)
-   • Game Master scoring: One / Several (multi at once) / Whole-team modes
-   • RSVP simplified to name, display name, phone, email + clickable rules
    ============================================================ */
 const EMAILJS = { publicKey:"Y6x7j5hwzytzCJOyR", serviceId:"service_wfcmvps", templateId:"template_42xo2sm" };
 try { if (window.emailjs && EMAILJS.publicKey.indexOf("YOUR_")!==0) emailjs.init({publicKey:EMAILJS.publicKey}); } catch(e){}
