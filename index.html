@@ -61,7 +61,7 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef } = React;
 /* ============================================================
-   THE SYNDICATE — Event Command App (v8)
+   THE SYNDICATE — Event Command App (v9)
    v8 FIX: restored the missing `note` state in RSVP that caused
    blank RSVP / Player screens in v7. Added an ErrorBoundary so a
    single component error can never blank the whole app again.
@@ -519,7 +519,7 @@ function PlayerPortal({state,update,logAudit,savedCode,rememberCode}){
   const myLeaderId=me.team!=null?leaders[me.team]:null;
   const iAmLeader=myLeaderId===me.id;
   const teammates=me.team!=null?state.players.filter(p=>p.team===me.team&&p.rsvp==="yes"):[];
-  const tabs=[["me","My Card"],["team","My House"],["mission","Mission"],["games","Games"]];
+  const tabs=[["me","My Card"],["team","My House"],["members","Members"],["mission","Mission"],["games","Games"]];
   const voteLeader=(id)=>update(n=>{const t=n.players.find(p=>p.id===me.id);t.leaderVote=id;logAudit(n,"Player","Leader vote",me.displayName,"","(secret)","house "+me.team);});
   const toggleOust=()=>update(n=>{const t=n.players.find(p=>p.id===me.id);t.oustVote=!t.oustVote;logAudit(n,"Player","Oust toggle",me.displayName,"","(secret)","house "+me.team);});
   const requestJoin=(toTeam)=>update(n=>{n.joinRequests=n.joinRequests||[];if(n.joinRequests.find(r=>r.requesterId===me.id&&r.status==="pending"))return;n.joinRequests.push({id:uid("REQ"),requesterId:me.id,fromTeam:me.team,toTeam,status:"pending",swapOutId:null});logAudit(n,"Player","Secret join request",me.displayName,"house "+me.team,"house "+toTeam,"secret");});
@@ -542,11 +542,24 @@ function PlayerPortal({state,update,logAudit,savedCode,rememberCode}){
         {(state.joinRequests||[]).find(r=>r.requesterId===me.id&&r.status==="pending")?<Pill color="#f59e0b">Request pending…</Pill>:<div className="flex flex-wrap gap-1">{Array.from({length:s.teamCount}).map((_,ti)=>ti!==me.team&&(<button key={ti} onClick={()=>requestJoin(ti)} className="px-2 py-1 rounded text-xs bg-[#1c1c20] border border-[#2a2a2e] hover:border-gold" style={{color:TEAMS[ti].ring}}>Join {TEAMS[ti].name}</button>))}</div>}</div>
       {iAmLeader&&(<div className="card p-5 glow"><h3 className="gold font-semibold text-sm mb-2">👑 Leader desk — pending requests</h3>{myPendingReqsAsLeader.length===0?<p className="text-xs text-[#8a8578]">No secret requests right now.</p>:myPendingReqsAsLeader.map(r=>{const req=state.players.find(p=>p.id===r.requesterId);return(<LeaderReq key={r.id} req={req} team={team} teammates={teammates} me={me} onDecide={(accept,swap)=>decideReq(r.id,accept,swap)}/>);})}</div>)}
     </>)}</div>)}
-    {tab==="mission"&&<MissionTab state={state} me={me} update={update} logAudit={logAudit}/>}
+    {tab==="members"&&<MembersTab state={state} me={me}/>}
+    {tab==="mission"&&<MissionTab state={state} me={me} update={update} logAudit={logAudit}/>} 
     {tab==="games"&&(<div className="space-y-3"><p className="text-xs text-[#8a8578]">Every game, explained simply. The MC also reads all rules aloud on the night.</p>{GAME_GUIDE.map((g,i)=><GameCard key={i} g={g}/>)}</div>)}
     <button className="text-xs text-[#5f5b52] underline block mx-auto hover:text-red-400" onClick={signOut}>sign out of this phone</button>
   </div>);
 }
+function MembersTab({state,me}){
+  const confirmed=[...state.players].filter(p=>p.rsvp==="yes").sort((a,b)=>String(a.displayName||a.fullName||"").localeCompare(String(b.displayName||b.fullName||"")));
+  const housesChosen=confirmed.some(p=>p.team!=null);
+  const label=p=>p.displayName||p.fullName||"Member";
+  if(!confirmed.length)return <div className="card p-5 text-sm text-[#8a8578]">No confirmed Members yet.</div>;
+  return (<div className="space-y-3">
+    <div className="card p-4 flex items-center justify-between"><div><h3 className="gold font-semibold text-sm">👥 Members</h3><p className="text-[11px] text-[#8a8578] mt-1">Meet the people playing tonight.</p></div><Pill>{confirmed.length} confirmed</Pill></div>
+    {!housesChosen?<div className="card p-4"><div className="grid grid-cols-2 gap-2">{confirmed.map(p=><div key={p.id} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${p.id===me.id?'bg-[#242018] border border-gold':'bg-[#1c1c20] border border-[#2a2a2e]'}`}><span className="w-2.5 h-2.5 rounded-full bg-[#5f5b52]"></span><span className="text-sm truncate">{label(p)} {p.id===me.id&&<span className="gold text-[10px]">(you)</span>}</span></div>)}</div><p className="text-[10px] text-[#5f5b52] mt-3 text-center">House colours will appear after the live draw.</p></div>
+    :<div className="space-y-3">{Array.from({length:state.settings.teamCount||5}).map((_,ti)=>{const members=confirmed.filter(p=>p.team===ti);if(!members.length)return null;const house=TEAMS[ti];return <div key={ti} className="card p-4" style={{borderColor:house.ring+"88"}}><div className="flex items-center justify-between mb-3"><div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full" style={{background:house.ring}}></span><h4 className="font-bold text-sm" style={{color:house.ring}}>{house.name}</h4></div><span className="text-[10px] text-[#8a8578]">{members.length} members</span></div><div className="grid grid-cols-2 gap-2">{members.map(p=><div key={p.id} className={`flex items-center gap-2 rounded-lg px-3 py-2 ${p.id===me.id?'bg-[#242018] border border-gold':'bg-[#1c1c20] border border-[#2a2a2e]'}`}><span className="w-2.5 h-2.5 rounded-full" style={{background:house.ring}}></span><span className="text-sm truncate">{label(p)} {p.id===me.id&&<span className="gold text-[10px]">(you)</span>}</span></div>)}</div></div>})}{confirmed.some(p=>p.team==null)&&<div className="card p-4"><h4 className="text-xs text-[#8a8578] mb-2">Awaiting House</h4><div className="flex flex-wrap gap-2">{confirmed.filter(p=>p.team==null).map(p=><span key={p.id} className="px-3 py-1.5 rounded-lg bg-[#1c1c20] text-sm">{label(p)}{p.id===me.id?' (you)':''}</span>)}</div></div>}</div>}
+  </div>);
+}
+
 function MissionTab({state,me,update,logAudit}){
   const [num,setNum]=useState(""); const [err,setErr]=useState("");
   const setObj=MISSION_SETS.find(x=>x.n===me.missionNo);
