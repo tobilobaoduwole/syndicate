@@ -9,7 +9,6 @@
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-<!-- Firebase COMPAT SDK (reliable from file:// and flaky networks) -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
@@ -50,6 +49,10 @@
   ::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:#2a2a2e;border-radius:6px}
   @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
   .rise{animation:rise .4s ease}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+  .floaty{animation:float 5s ease-in-out infinite}
+  @keyframes dash{to{stroke-dashoffset:-200}}
+  .maze-line{stroke-dasharray:6 6;animation:dash 9s linear infinite}
   input,select,textarea{color:#111}
 </style>
 </head>
@@ -58,11 +61,22 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef } = React;
 /* ============================================================
-   THE SYNDICATE — Event Management Application (v5)
+   THE SYNDICATE — Event Command App (v7)
+   v7 adds:
+   • Sequential secret missions: Easy unlocks Moderate unlocks Hard.
+     Locked tiers show ✱✱✱✱ with the points on offer.
+   • Richer home-page hero: maze / circuit / brain motif artwork.
+   Carried: 35 numbered mission sets, capacity 35, persistent phone
+   sign-in, Go-live roster clear, live Firebase sync (hydrate-first).
    ============================================================ */
 const EMAILJS = { publicKey:"Y6x7j5hwzytzCJOyR", serviceId:"service_wfcmvps", templateId:"template_42xo2sm" };
 try { if (window.emailjs && EMAILJS.publicKey.indexOf("YOUR_")!==0) emailjs.init({publicKey:EMAILJS.publicKey}); } catch(e){}
 const PINS = { admin:"0011", gm:"1100" };
+const TIERS = [
+  { key:"e", label:"Easy",     colour:"#5fb488", reward:5  },
+  { key:"m", label:"Moderate", colour:"#d4af37", reward:10 },
+  { key:"h", label:"Hard",     colour:"#e0765f", reward:20 },
+];
 const ROUND_FLOW = [
   "Registration","Induction","Team Reveal","Leader Vote",
   "First Impressions","The Whisper Market","Blackbook",
@@ -80,14 +94,14 @@ const DEFAULT_SETTINGS = {
   addressFull: "[Full address — shown to confirmed Members only]",
   mapLink: "",
   dressCode: "Smart casual — dark or neutral tones",
-  capacity: 40,
-  teamCount: 4,
+  capacity: 35,
+  teamCount: 5,
   showTeammates: true,
   roundIndex: 0,
   suspense:false, revealWinner:false,
   timerEnd:null, timerLeft:null,
 };
-const CAPS = { "First Impressions":10,"Whisper Market":40,"Blackbook":30,"Convoy":60,"Auction Floor":60,"Signal & Noise":60,"Alliance Table":30,"Chain Reaction":25,"Vault Codes":40,"The Final Ledger":100,"Secret Mission":20,"Jury Bonus":15 };
+const CAPS = { "First Impressions":10,"Whisper Market":40,"Blackbook":30,"Convoy":60,"Auction Floor":60,"Signal & Noise":60,"Alliance Table":30,"Chain Reaction":25,"Vault Codes":40,"The Final Ledger":100,"Secret Mission":35,"Jury Bonus":15 };
 const TEAMS = [
   { name:"House Onyx",   ring:"#9a9aa2", color:"#4b4b52" },
   { name:"House Ember",  ring:"#e0765f", color:"#a5432f" },
@@ -97,13 +111,43 @@ const TEAMS = [
   { name:"House Crimson",ring:"#c05f74", color:"#7a2233" },
 ];
 const STATUS_LABEL = { active:"Active", qualified:"Qualified", semifinalist:"Semi-finalist", finalist:"Finalist", frozen:"Frozen out", redeemed:"Redeemed", chair:"THE CHAIR" };
-const SECRET_MISSIONS = [
-  {id:"M01",tier:"Easy",cat:"Observation",obj:"Note the wristband colour of 3 Members before the House Stage ends.",reward:5,penalty:0},
-  {id:"M02",tier:"Easy",cat:"Persuasion",obj:"Convince any Member to gift you 1 Bar without threatening them.",reward:5,penalty:0},
-  {id:"M03",tier:"Moderate",cat:"Trading",obj:"End the Whisper Market holding more Bars than you started with.",reward:8,penalty:2},
-  {id:"M04",tier:"Moderate",cat:"Alliance",obj:"Form a written 2-person pact that survives one full round.",reward:8,penalty:2},
-  {id:"M05",tier:"Difficult",cat:"Influence",obj:"Get an opposing House to vote the way you want in Blackbook.",reward:12,penalty:4},
-  {id:"M06",tier:"High-risk",cat:"Misdirection",obj:"Publicly back a losing side, then flip and still qualify.",reward:18,penalty:8},
+// 35 unique mission sets — each number has its OWN Easy / Moderate / Hard mission.
+const MISSION_SETS = [
+ {n:1,  e:"Learn the display names of 3 Members from a House that is not yours.", m:"Persuade someone to gift you 1 Bar without trading anything back.", h:"Finish a round holding more Bars than your own Team Leader."},
+ {n:2,  e:"Find out which Member travelled the furthest to be here tonight.", m:"Get two Members who had not met before tonight to trade with each other.", h:"Be publicly thanked by a rival House for something you did."},
+ {n:3,  e:"Note the shoe colour of 3 different Members before the first break.", m:"Complete a trade in which you give away more than you receive — and say why.", h:"Convince a rival House to vote the way you want in a group vote."},
+ {n:4,  e:"Introduce two Members who have never spoken to each other.", m:"Get someone outside your House to tell you their mission tier.", h:"End the night in the top half of the scoreboard without ever raising your voice."},
+ {n:5,  e:"Count how many Members are wearing something gold or amber.", m:"Form a written two-person pact that survives one full round.", h:"Break a pact you made — and still have that person speak well of you afterwards."},
+ {n:6,  e:"Discover one Member's favourite game of all time.", m:"Trade with at least 3 different Houses in a single round.", h:"Be the last person in your House to spend a Bar tonight."},
+ {n:7,  e:"Learn the name of the person sitting furthest from you.", m:"Get a Member of another House to publicly agree with your strategy.", h:"Predict the eventual Chair before the semi-final and tell the marshal privately."},
+ {n:8,  e:"Find a Member who shares your birth month.", m:"Convince your House to change a decision they had already made.", h:"Win a round in which you spoke fewer than ten words."},
+ {n:9,  e:"Identify which House has the most Bars after the first game.", m:"Successfully bluff about how many Bars you hold.", h:"Get someone to protect you in a vote without asking them directly."},
+ {n:10, e:"Learn one unexpected fact about a Member you didn't know before.", m:"End a trading round holding at least one card of every kind you started with.", h:"Cause a rival House to spend Bars on something that does not help them."},
+ {n:11, e:"Find out who checked in first tonight.", m:"Get a Member of another House to share information with you willingly.", h:"Survive an entire round without anyone naming you in discussion."},
+ {n:12, e:"Note who is standing to the immediate left of your Team Leader.", m:"Persuade someone to swap seats or positions with you.", h:"Be given a Bar by someone you have never traded with before."},
+ {n:13, e:"Learn two Members' preferred display names, not their real names.", m:"Get your House to nominate someone other than you for a task.", h:"Hold the highest Bar count in the room at any single moment."},
+ {n:14, e:"Discover one Member who has played a strategy game competitively.", m:"Broker a trade between two people that you are not part of.", h:"Change the outcome of a vote by convincing exactly one person."},
+ {n:15, e:"Count the number of Members in the garden at any one time.", m:"Trade a card away and reacquire the same type later.", h:"End a round with exactly the number of Bars the marshal privately sets you."},
+ {n:16, e:"Find out which Member is most confident about winning.", m:"Get someone to tell you who they voted for.", h:"Be the first person your House turns to for a decision in a later round."},
+ {n:17, e:"Learn the display name of every Member of one rival House.", m:"Publicly back a plan you privately doubt — and be right anyway.", h:"Finish a team game as the highest individual scorer in your House."},
+ {n:18, e:"Note which Member laughed first during the opening ceremony.", m:"Get two different people to offer you a trade in the same round.", h:"Persuade a rival Team Leader to reveal one of their plans."},
+ {n:19, e:"Find out who arrived with someone else rather than alone.", m:"Give away a Bar and recover two later in the night.", h:"Be named 'most trustworthy' by someone outside your House."},
+ {n:20, e:"Identify one Member wearing no dark colours.", m:"Get your House to reach a unanimous decision in under two minutes.", h:"Win a round despite being the last to be given information."},
+ {n:21, e:"Learn which Member has attended the most parties this year.", m:"Trade successfully with the Member holding the fewest Bars.", h:"Convince someone to abstain from a vote entirely."},
+ {n:22, e:"Find out who is most nervous about the games.", m:"Get a Member to describe their mission category to you.", h:"Reach the individual stage without ever holding a Team Leader role."},
+ {n:23, e:"Note how many Members are holding a drink during the briefing.", m:"Successfully defend a teammate from being blamed for a loss.", h:"Cause a swing of at least ten points through a single decision."},
+ {n:24, e:"Learn one Member's favourite Nigerian dish.", m:"Make a deal that benefits you and one rival equally.", h:"Be the only person in your House to complete a round objective."},
+ {n:25, e:"Find a Member who has the same first initial as you.", m:"Get someone to publicly credit you for an idea.", h:"Hold the same number of Bars at the start and end of the night."},
+ {n:26, e:"Identify which House claimed their team table first.", m:"Trade with a Member of the House currently in last place.", h:"Convince your House to take a risk that pays off."},
+ {n:27, e:"Learn the name of someone who volunteered for a task tonight.", m:"Get two Members to disagree with each other — politely.", h:"Predict correctly which House wins a team game, before it starts."},
+ {n:28, e:"Note which Member speaks least in the first hour.", m:"Bring the quietest person in the room into a conversation for two minutes.", h:"Have that quiet Member score points because of something you did."},
+ {n:29, e:"Find out which Member would most like to be Team Leader.", m:"Get information from a rival House and share it with your own.", h:"Be trusted with another Member's secret and keep it until the reveal."},
+ {n:30, e:"Learn which Member has the longest journey home tonight.", m:"Complete a trade in complete silence, using only gestures.", h:"End a negotiation round having traded with more people than anyone else."},
+ {n:31, e:"Count how many Members are wearing black.", m:"Persuade someone to change their vote at the last moment.", h:"Be on the winning side of three separate group decisions."},
+ {n:32, e:"Find out who took the first photograph tonight.", m:"Get a Member to lend you something and return it before the break.", h:"Score points in a round where your House finished last."},
+ {n:33, e:"Learn one Member's proudest achievement this year.", m:"Successfully claim you hold a card you do not have.", h:"Convince a rival to make a trade that helps you more than them — openly."},
+ {n:34, e:"Identify the Member who is closest friends with the host.", m:"Get your Team Leader to act on advice you gave them.", h:"Reach the semi-final without breaking a single agreement."},
+ {n:35, e:"Find out which Member is the youngest in the room.", m:"Trade away your most valuable card and still improve your position.", h:"Be publicly named by the Game Master for excellent play."},
 ];
 const GAME_GUIDE = [
   {name:"First Impressions",slot:"Arrival / Warm-up",simple:"Mingle and quietly observe everyone. Later we ask 'who…' questions. Sharp observers score.",rules:["Observe during welcome drinks.","At the whistle, answer 8 'who…' prompts.","+1 per correct, +2 for a correct early prediction.","No talking once slips are out."]},
@@ -126,11 +170,12 @@ const SAMPLE_PLAYERS = [
   id:"SMP-"+String(i+1).padStart(3,"0"), fullName:p[0], displayName:p[1],
   phone:"", email:"sample"+(i+1)+"@example.invalid", rsvp:"yes", checkedIn:p[2],
   team:i%4, playerNumber:i+1, ip:[22,18,31,9,27,15,12,24,14,19,21,7][i], tokens:[3,5,2,4,6,3,1,5,3,4,2,3][i],
-  status:"active", mission:SECRET_MISSIONS[i%SECRET_MISSIONS.length].id, missionDone:false,
+  status:"active", missionNo:null, missionTier:0,
   leaderVote:null, oustVote:false, committee:[true,false,false,false,true,false,false,false,false,true,false,false][i],
-  photoConsent:true, dietary:"", notes:"SAMPLE DATA — demonstration record", sample:true,
+  photoConsent:true, notes:"SAMPLE DATA — demonstration record", sample:true,
 }));
 const KEY="syndicate_state_v5";
+const PKEY="syndicate_player_code";
 const load=()=>{try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null}catch(e){return null}};
 const save=(s)=>{try{localStorage.setItem(KEY,JSON.stringify(s))}catch(e){}};
 const initialState=()=>load()||{
@@ -162,17 +207,62 @@ function computeLeaders(state){
   }
   return leaders;
 }
+// ---------- Hero artwork: maze / circuit / brain motif ----------
+function HeroArt(){
+  return (
+    <svg viewBox="0 0 420 200" className="w-full max-w-lg mx-auto floaty" style={{opacity:.95}}>
+      <defs>
+        <linearGradient id="gg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#d4af37" stopOpacity="1"/>
+          <stop offset="100%" stopColor="#8a6a1f" stopOpacity=".7"/>
+        </linearGradient>
+        <radialGradient id="glow2"><stop offset="0%" stopColor="#d4af37" stopOpacity=".28"/><stop offset="100%" stopColor="#d4af37" stopOpacity="0"/></radialGradient>
+      </defs>
+      <ellipse cx="210" cy="100" rx="170" ry="80" fill="url(#glow2)"/>
+      {/* left: maze */}
+      <g stroke="url(#gg)" strokeWidth="2" fill="none" opacity=".85">
+        <rect x="24" y="52" width="96" height="96" rx="6"/>
+        <path d="M24 76h60M48 76v24M48 100h48M96 52v48M72 124h48M72 100v24M24 124h24"/>
+      </g>
+      {/* centre: brain / network */}
+      <g opacity=".95">
+        <path d="M210 42c-26 0-44 16-44 34 0 8 3 14 8 19-5 6-7 12-7 19 0 20 19 34 43 34s43-14 43-34c0-7-2-13-7-19 5-5 8-11 8-19 0-18-18-34-44-34z"
+              fill="none" stroke="url(#gg)" strokeWidth="2.2"/>
+        <path className="maze-line" d="M210 56v88M186 74c14 6 24 6 38 0M186 126c14-6 24-6 38 0M196 100h28"
+              fill="none" stroke="#d4af37" strokeWidth="1.6" opacity=".9"/>
+        {[[186,74],[224,74],[186,126],[224,126],[210,56],[210,144],[196,100],[224,100]].map((c,i)=>(
+          <circle key={i} cx={c[0]} cy={c[1]} r="3.4" fill="#d4af37"/>
+        ))}
+      </g>
+      {/* right: game pieces — die, chess pawn, cards */}
+      <g stroke="url(#gg)" strokeWidth="2" fill="none" opacity=".85">
+        <rect x="300" y="56" width="42" height="42" rx="8" transform="rotate(-12 321 77)"/>
+        <g fill="#d4af37" stroke="none" transform="rotate(-12 321 77)">
+          <circle cx="311" cy="67" r="3"/><circle cx="331" cy="67" r="3"/>
+          <circle cx="321" cy="77" r="3"/><circle cx="311" cy="87" r="3"/><circle cx="331" cy="87" r="3"/>
+        </g>
+        <rect x="352" y="104" width="30" height="42" rx="4" transform="rotate(10 367 125)"/>
+        <rect x="344" y="100" width="30" height="42" rx="4" transform="rotate(-4 359 121)"/>
+        <path d="M300 148c0-10 6-12 6-18a8 8 0 10-16 0c0 6 6 8 6 18z"/>
+        <path d="M292 148h20"/>
+      </g>
+      {/* connecting dotted route */}
+      <path className="maze-line" d="M120 100h46M254 100h40" stroke="#d4af37" strokeWidth="1.5" fill="none" opacity=".8"/>
+    </svg>
+  );
+}
 function App(){
   const [state,setState]=useState(initialState);
   const [role,setRole]=useState("public");
-  const [staff,setStaff]=useState(null); // null | "admin" | "gm"
+  const [staff,setStaff]=useState(null);
   const [fb,setFb]=useState(()=> (window.SYNDICATE_STATUS||{state:"connecting",error:""}));
   const fbApplying=useRef(false);
   const hydrated=useRef(false);
   const [deepCode]=useState(()=>{try{return new URLSearchParams(location.search).get("code")||"";}catch(e){return "";}});
-  useEffect(()=>{if(deepCode)setRole("player");},[deepCode]);
+  const [savedCode,setSavedCode]=useState(()=>{try{return localStorage.getItem(PKEY)||""}catch(e){return ""}});
+  useEffect(()=>{if(deepCode){try{localStorage.setItem(PKEY,deepCode)}catch(e){} setSavedCode(deepCode); setRole("player");}},[deepCode]);
+  useEffect(()=>{if(!deepCode&&savedCode)setRole("player");},[]);
   useEffect(()=>{const t=setInterval(()=>{ if(window.SYNDICATE_STATUS) setFb({...window.SYNDICATE_STATUS}); },800); return ()=>clearInterval(t);},[]);
-  // FIX: never push to the cloud until we've first READ it — stops fresh devices from wiping existing RSVPs
   useEffect(()=>{save(state); if(!hydrated.current)return; if(fbApplying.current){fbApplying.current=false;return;} if(window.SyndicateFB)window.SyndicateFB.push(state);},[state]);
   useEffect(()=>{const start=()=>window.SyndicateFB.subscribe((remote)=>{
       if(remote){ fbApplying.current=true; hydrated.current=true; setState(remote); }
@@ -181,6 +271,7 @@ function App(){
     if(window.SyndicateFB)start(); else window.addEventListener("syndicate-fb-ready",start,{once:true});},[]);
   const update=(fn)=>setState(s=>{const n=structuredClone(s);fn(n);return n;});
   const logAudit=(n,op,act,tgt,prev,next,reason)=>{n.audit.unshift({t:Date.now(),op,act,tgt,prev:String(prev),next:String(next),reason:reason||""});if(n.audit.length>500)n.audit.pop();};
+  const rememberCode=(c)=>{try{c?localStorage.setItem(PKEY,c):localStorage.removeItem(PKEY)}catch(e){} setSavedCode(c||"");};
   const publicNav=[["public","Home","🏛️"],["guest","RSVP","✍️"],["player","Player","🎭"]];
   const adminNav=[["public","Home","🏛️"],["admin","Admin","🛠️"],["gm","Game Master","🎩"],["scorekeeper","Scorekeeper","📋"],["scoreboard","Scoreboard","🏆"]];
   const gmNav=[["public","Home","🏛️"],["gm","Game Master","🎩"],["scorekeeper","Scorekeeper","📋"],["scoreboard","Scoreboard","🏆"]];
@@ -212,15 +303,15 @@ function App(){
       )}
       <div className="max-w-6xl mx-auto px-4 py-6 rise" key={view}>
         {view==="public" && <PublicPage state={state} setRole={setRole}/>}
-        {view==="guest" && <RSVP state={state} update={update} logAudit={logAudit}/>}
-        {view==="player" && <PlayerPortal state={state} update={update} logAudit={logAudit} deepCode={deepCode}/>}
+        {view==="guest" && <RSVP state={state} update={update} logAudit={logAudit} rememberCode={rememberCode}/>}
+        {view==="player" && <PlayerPortal state={state} update={update} logAudit={logAudit} savedCode={savedCode} rememberCode={rememberCode}/>}
         {view==="staff" && <StaffGate onUnlock={(lvl)=>{setStaff(lvl);setRole(lvl==="admin"?"admin":"gm");}}/>}
         {view==="admin" && <AdminPanel state={state} update={update} logAudit={logAudit}/>}
         {view==="gm" && <GameMaster state={state} update={update} logAudit={logAudit}/>}
         {view==="scorekeeper" && <Scorekeeper state={state} update={update} logAudit={logAudit}/>}
         {view==="scoreboard" && <Scoreboard state={state} update={update}/>}
       </div>
-      <div className="max-w-6xl mx-auto px-4 pb-10 text-center text-[10px] text-[#5f5b52]">{state.settings.eventName} · live-sync via Firebase, offline via browser storage · SAMPLE DATA is clearly labelled — reset before live use.</div>
+      <div className="max-w-6xl mx-auto px-4 pb-10 text-center text-[10px] text-[#5f5b52]">{state.settings.eventName} · live-sync via Firebase, offline via browser storage · SAMPLE DATA is clearly labelled — clear it before launch.</div>
     </div>
   );
 }
@@ -230,35 +321,7 @@ function StaffGate({onUnlock}){
   return (<div className="max-w-sm mx-auto card p-6 glow mt-10"><div className="text-2xl mb-1">🔒</div><h2 className="gold font-bold text-lg mb-1">Event Staff</h2>
     <p className="text-sm text-[#b9b3a3] mb-4">Operators only. Enter your Admin or Game Master PIN.</p>
     <input className={inputCls} placeholder="PIN" value={v} onChange={e=>{setV(e.target.value);setErr(false)}} onKeyDown={e=>e.key==="Enter"&&go()}/>
-    {err&&<div className="text-red-400 text-xs mt-2">Incorrect PIN.</div>}<div className="mt-4"><Btn onClick={go}>Unlock</Btn></div>
-    <div className="text-[10px] text-[#5f5b52] mt-3">Admin PIN opens event settings; GM PIN opens the live control panel.</div></div>);
-}
-function PublicPage({state,setRole}){
-  const s=state.settings;
-  const [now,setNow]=useState(Date.now());
-  useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t)},[]);
-  const target = s.eventDateTime ? new Date(s.eventDateTime).getTime() : null;
-  const diff = target? Math.max(0,target-now) : null;
-  const d=diff!=null?Math.floor(diff/864e5):0, h=diff!=null?Math.floor(diff/36e5)%24:0, m=diff!=null?Math.floor(diff/6e4)%60:0, sec=diff!=null?Math.floor(diff/1e3)%60:0;
-  const dateLabel = target? new Date(s.eventDateTime).toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long",year:"numeric"}) : "[Date to be confirmed]";
-  const [faq,setFaq]=useState(null);
-  const faqs=[["Do I need any skills?","No. Every game is explained in under five minutes. It rewards thinking, reading people and nerve — not trivia."],["What should I wear?",s.dressCode],["Is it a drinking game?","No. Drinks are served, but no game depends on alcohol."],["How long does it run?","Five to seven hours with food, breaks and dramatic reveals."],["Where is it?",s.addressPublic]];
-  return (<div className="space-y-6">
-    <div className="card p-8 glow text-center"><div className="text-5xl mb-2">♦</div>
-      <h1 className="gold text-3xl md:text-5xl font-black tracking-[0.2em]">{s.eventName}</h1>
-      <p className="italic text-[#c9c3b2] mt-2">"{s.tagline}"</p>
-      {target ? <div className="grid grid-cols-4 gap-2 max-w-md mx-auto my-6">{[["DAYS",d],["HRS",h],["MIN",m],["SEC",sec]].map(([l,v])=>(<div key={l} className="card py-3"><div className="gold text-2xl font-bold">{String(v).padStart(2,"0")}</div><div className="text-[10px] text-[#8a8578]">{l}</div></div>))}</div>
-        : <div className="my-6 text-[#8a8578] text-sm">Countdown begins once the date is set.</div>}
-      <div className="flex flex-wrap justify-center gap-2 text-sm"><Pill>📅 {dateLabel}</Pill><Pill>🕒 {s.timeLabel}</Pill><Pill>📍 {s.addressPublic}</Pill><Pill>👔 {s.dressCode}</Pill></div>
-      {s.mapLink&&<div className="mt-3"><a href={s.mapLink} target="_blank" className="gold underline text-xs">📍 View approximate area on Google Maps</a></div>}
-      <div className="mt-6 flex flex-wrap gap-2 justify-center"><Btn onClick={()=>setRole("guest")}>Reserve your seat →</Btn><Btn tone="ghost" onClick={()=>setRole("player")}>I have a code — enter →</Btn></div>
-      <p className="text-[11px] text-[#8a8578] mt-3">By invitation. Capacity is capped at {s.capacity} Members.</p></div>
-    <div className="card p-6"><h3 className="gold font-bold mb-2">The Premise</h3><p className="text-sm text-[#d3cdbe] leading-relaxed">One night. One private society of sharp minds. You'll be drawn into a team, earn <b className="gold">Influence</b>, trade in <b className="gold">Bars</b>, forge alliances and survive elimination rounds. By the final round, only one Member will hold <b className="gold">The Chair</b>.</p></div>
-    <div className="grid md:grid-cols-2 gap-4">
-      <div className="card p-6"><h3 className="gold font-bold mb-3">House Rules</h3><ul className="text-sm text-[#d3cdbe] space-y-2 list-disc pl-5">{HOUSE_RULES.map((r,i)=><li key={i}>{r}</li>)}</ul></div>
-      <div className="card p-6"><h3 className="gold font-bold mb-3">FAQ</h3>{faqs.map((f,i)=>(<div key={i} className="border-b border-[#2a2a2e] py-2"><button className="w-full text-left text-sm font-semibold flex justify-between" onClick={()=>setFaq(faq===i?null:i)}><span>{f[0]}</span><span className="gold">{faq===i?"–":"+"}</span></button>{faq===i&&<p className="text-xs text-[#b9b3a3] mt-1">{f[1]}</p>}</div>))}</div>
-    </div>
-  </div>);
+    {err&&<div className="text-red-400 text-xs mt-2">Incorrect PIN.</div>}<div className="mt-4"><Btn onClick={go}>Unlock</Btn></div></div>);
 }
 const HOUSE_RULES=[
   "Play hard, stay kind — no personal, physical or humiliating play.",
@@ -274,6 +337,36 @@ const FAIR_RULES=[
   "No real-money gambling of any kind.",
   "Treat every Member and every staff member with respect.",
 ];
+function PublicPage({state,setRole}){
+  const s=state.settings;
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t)},[]);
+  const target = s.eventDateTime ? new Date(s.eventDateTime).getTime() : null;
+  const diff = target? Math.max(0,target-now) : null;
+  const d=diff!=null?Math.floor(diff/864e5):0, h=diff!=null?Math.floor(diff/36e5)%24:0, m=diff!=null?Math.floor(diff/6e4)%60:0, sec=diff!=null?Math.floor(diff/1e3)%60:0;
+  const dateLabel = target? new Date(s.eventDateTime).toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long",year:"numeric"}) : "[Date to be confirmed]";
+  const [faq,setFaq]=useState(null);
+  const faqs=[["Do I need any skills?","No. Every game is explained in under five minutes. It rewards thinking, reading people and nerve — not trivia."],["What should I wear?",s.dressCode],["Is it a drinking game?","No. Drinks are served, but no game depends on alcohol."],["How long does it run?","Five to seven hours with food, breaks and dramatic reveals."],["Where is it?",s.addressPublic]];
+  const pillars=[["🧩","Logic"],["🤝","Alliances"],["🎭","Bluffing"],["🧠","Memory"],["⚖️","Risk"]];
+  return (<div className="space-y-6">
+    <div className="card p-8 glow text-center overflow-hidden">
+      <HeroArt/>
+      <h1 className="gold text-3xl md:text-5xl font-black tracking-[0.2em] mt-2">{s.eventName}</h1>
+      <p className="italic text-[#c9c3b2] mt-2">"{s.tagline}"</p>
+      <div className="flex flex-wrap justify-center gap-2 mt-4">{pillars.map(([i,l])=><span key={l} className="px-2.5 py-1 rounded-full text-[11px] font-semibold" style={{background:"rgba(212,175,55,.09)",color:"#d4af37",border:"1px solid #2a2a2e"}}>{i} {l}</span>)}</div>
+      {target ? <div className="grid grid-cols-4 gap-2 max-w-md mx-auto my-6">{[["DAYS",d],["HRS",h],["MIN",m],["SEC",sec]].map(([l,v])=>(<div key={l} className="card py-3"><div className="gold text-2xl font-bold">{String(v).padStart(2,"0")}</div><div className="text-[10px] text-[#8a8578]">{l}</div></div>))}</div>
+        : <div className="my-6 text-[#8a8578] text-sm">Countdown begins once the date is set.</div>}
+      <div className="flex flex-wrap justify-center gap-2 text-sm"><Pill>📅 {dateLabel}</Pill><Pill>🕒 {s.timeLabel}</Pill><Pill>📍 {s.addressPublic}</Pill><Pill>👔 {s.dressCode}</Pill></div>
+      {s.mapLink&&<div className="mt-3"><a href={s.mapLink} target="_blank" className="gold underline text-xs">📍 View approximate area on Google Maps</a></div>}
+      <div className="mt-6 flex flex-wrap gap-2 justify-center"><Btn onClick={()=>setRole("guest")}>Reserve your seat →</Btn><Btn tone="ghost" onClick={()=>setRole("player")}>I have a code — enter →</Btn></div>
+      <p className="text-[11px] text-[#8a8578] mt-3">By invitation. Capacity is capped at {s.capacity} Members.</p></div>
+    <div className="card p-6"><h3 className="gold font-bold mb-2">The Premise</h3><p className="text-sm text-[#d3cdbe] leading-relaxed">One night. One private society of sharp minds. You'll be drawn into a House, earn <b className="gold">Influence</b>, trade in <b className="gold">Bars</b>, forge alliances and survive elimination rounds. By the final round, only one Member will hold <b className="gold">The Chair</b>.</p></div>
+    <div className="grid md:grid-cols-2 gap-4">
+      <div className="card p-6"><h3 className="gold font-bold mb-3">House Rules</h3><ul className="text-sm text-[#d3cdbe] space-y-2 list-disc pl-5">{HOUSE_RULES.map((r,i)=><li key={i}>{r}</li>)}</ul></div>
+      <div className="card p-6"><h3 className="gold font-bold mb-3">FAQ</h3>{faqs.map((f,i)=>(<div key={i} className="border-b border-[#2a2a2e] py-2"><button className="w-full text-left text-sm font-semibold flex justify-between" onClick={()=>setFaq(faq===i?null:i)}><span>{f[0]}</span><span className="gold">{faq===i?"–":"+"}</span></button>{faq===i&&<p className="text-xs text-[#b9b3a3] mt-1">{f[1]}</p>}</div>))}</div>
+    </div>
+  </div>);
+}
 function RulesModal({kind,onClose,onAgree}){
   const list=kind==="house"?HOUSE_RULES:FAIR_RULES; const title=kind==="house"?"House Rules":"Fair-Play Rules";
   return (<div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(0,0,0,.75)"}} onClick={onClose}>
@@ -284,8 +377,7 @@ function RulesModal({kind,onClose,onAgree}){
     </div>
   </div>);
 }
-// ===================== RSVP (simplified) =====================
-function RSVP({state,update,logAudit}){
+function RSVP({state,update,logAudit,rememberCode}){
   const s=state.settings; const confirmed=state.players.filter(p=>p.rsvp==="yes").length; const full=confirmed>=s.capacity;
   const blank={fullName:"",displayName:"",phone:"",email:"",house:false,fair:false};
   const [f,setF]=useState(blank); const [done,setDone]=useState(null); const [err,setErr]=useState(""); const [note,setNote]=useState(""); const [modal,setModal]=useState(null);
@@ -302,8 +394,9 @@ function RSVP({state,update,logAudit}){
     if(state.players.find(p=>(p.email||"").trim().toLowerCase()===ek)){setErr("This email has already been used to register.");return;}
     if(f.phone.trim()&&state.players.find(p=>p.phone===f.phone.trim())){setErr("This phone number has already registered.");return;}
     const status=full?"waitlist":"yes"; const id=uid("SYN"); const dn=f.displayName.trim()||f.fullName.trim().split(" ")[0];
-    update(n=>{n.players.push({id,fullName:f.fullName.trim(),displayName:dn,phone:f.phone.trim(),email:f.email.trim(),rsvp:status,checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",mission:null,missionDone:false,leaderVote:null,oustVote:false,committee:false,photoConsent:true,dietary:"",notes:"",sample:false});logAudit(n,"RSVP","New registration",f.fullName.trim(),"—",status,"self form");});
+    update(n=>{n.players.push({id,fullName:f.fullName.trim(),displayName:dn,phone:f.phone.trim(),email:f.email.trim(),rsvp:status,checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",missionNo:null,missionTier:0,leaderVote:null,oustVote:false,committee:false,photoConsent:true,notes:"",sample:false});logAudit(n,"RSVP","New registration",f.fullName.trim(),"—",status,"self form");});
     sendEmail(f.fullName.trim(),dn,f.email.trim(),id);
+    rememberCode&&rememberCode(id);
     setDone({id,status}); setF(blank); setErr("");
   };
   if(done)return (<div className="max-w-lg mx-auto card p-8 glow text-center"><div className="text-5xl mb-2">{done.status==="waitlist"?"⏳":"♦"}</div>
@@ -334,7 +427,6 @@ function QRlike({text,size=104}){
   const cells=13; const grid=useMemo(()=>{let h=0;for(let i=0;i<text.length;i++)h=(h*31+text.charCodeAt(i))>>>0;const arr=[];let x=h||1;for(let i=0;i<cells*cells;i++){x=(x*1103515245+12345)&0x7fffffff;arr.push((x>>7)&1);}return arr;},[text]);
   return (<div className="mx-auto mt-2 bg-white p-2 rounded" style={{width:size+16}}><div className="grid" style={{gridTemplateColumns:`repeat(${cells},1fr)`,width:size,height:size}}>{grid.map((c,i)=><div key={i} style={{background:c?"#000":"#fff"}}/>)}</div></div>);
 }
-// ===================== ADMIN =====================
 function AdminPanel({state,update,logAudit}){
   const s=state.settings;
   const set=(k,v)=>update(n=>{const prev=n.settings[k];n.settings[k]=v;logAudit(n,"Admin","Setting "+k,k,prev,v,"admin edit");});
@@ -360,21 +452,23 @@ function AdminPanel({state,update,logAudit}){
       <div className="flex gap-2 items-center flex-wrap"><Btn onClick={genMap}>📍 Save address + generate Google Maps link</Btn>{s.mapLink&&<a href={s.mapLink} target="_blank" className="gold underline text-xs">Preview map link ↗</a>}</div>
       <label className="flex items-center gap-2 text-sm mt-4"><input type="checkbox" checked={s.showTeammates} onChange={e=>set("showTeammates",e.target.checked)}/> Show teammates inside each player's portal</label>
     </div>
-    <div className="card p-4 text-xs text-[#8a8578]">The <b className="gold">Game Master</b> panel (PIN 1100) runs the live event — advancing rounds, the timer and scoring. Admin only sets up details.</div>
+    <div className="card p-4 text-xs text-[#8a8578]">Secret missions are drawn on paper (1–{MISSION_SETS.length}). Players enter their number once, then unlock <b className="gold">Easy → Moderate → Hard</b> as the marshal verifies each stage in <b className="gold">Game Master → Setup → Missions</b>.</div>
   </div>);
 }
-// ===================== PLAYER PORTAL =====================
-function PlayerPortal({state,update,logAudit,deepCode}){
+function PlayerPortal({state,update,logAudit,savedCode,rememberCode}){
   const s=state.settings;
-  const [q,setQ]=useState(deepCode||""); const [player,setPlayer]=useState(null); const [tab,setTab]=useState("me");
+  const [q,setQ]=useState(savedCode||""); const [code,setCode]=useState(savedCode||""); const [tab,setTab]=useState("me"); const [notFound,setNotFound]=useState(false);
   const leaders=useMemo(()=>computeLeaders(state),[state]);
-  const find=(codeArg)=>{const code=(codeArg!=null?codeArg:q).trim();const p=state.players.find(x=>x.id.toLowerCase()===code.toLowerCase()||x.displayName.toLowerCase()===code.toLowerCase());setPlayer(p||"none");};
-  useEffect(()=>{if(deepCode)find(deepCode);},[deepCode]);
-  const me=player&&player!=="none"?state.players.find(p=>p.id===player.id):player;
-  if(!player)return (<div className="max-w-md mx-auto card p-6 glow"><h2 className="gold font-bold text-lg mb-1">🎭 Player Portal</h2><p className="text-sm text-[#b9b3a3] mb-3">Enter the entry code from your confirmation email.</p>
-    <input className={inputCls} placeholder="e.g. SYN-xxxx or SMP-003" value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&find()}/><div className="mt-3"><Btn onClick={()=>find()}>Open my portal</Btn></div><div className="text-[10px] text-[#5f5b52] mt-3">Try a sample: SMP-003</div></div>);
-  if(me==="none"||!me)return <div className="max-w-md mx-auto card p-6 text-center"><p className="text-sm">No Member found. <button className="gold underline" onClick={()=>{setPlayer(null);setQ("");}}>Try again</button></p></div>;
-  const team=me.team!=null?TEAMS[me.team]:null; const mission=SECRET_MISSIONS.find(m=>m.id===me.mission);
+  const me = code ? state.players.find(x=>x.id.toLowerCase()===code.toLowerCase()||x.displayName.toLowerCase()===code.toLowerCase()) : null;
+  const open=()=>{const c=q.trim(); if(!c)return; const found=state.players.find(x=>x.id.toLowerCase()===c.toLowerCase()||x.displayName.toLowerCase()===c.toLowerCase());
+    if(found){ setCode(found.id); rememberCode(found.id); setNotFound(false); } else setNotFound(true); };
+  const signOut=()=>{ setCode(""); setQ(""); rememberCode(""); setNotFound(false); };
+  if(!code||!me) return (<div className="max-w-md mx-auto card p-6 glow"><h2 className="gold font-bold text-lg mb-1">🎭 Player Portal</h2>
+    <p className="text-sm text-[#b9b3a3] mb-3">Enter the entry code from your confirmation email. You'll stay signed in on this phone.</p>
+    <input className={inputCls} placeholder="e.g. SYN-xxxx" value={q} onChange={e=>{setQ(e.target.value);setNotFound(false)}} onKeyDown={e=>e.key==="Enter"&&open()}/>
+    {notFound&&<div className="text-red-400 text-xs mt-2">No Member found with that code.</div>}
+    <div className="mt-3"><Btn onClick={open}>Open my portal</Btn></div></div>);
+  const team=me.team!=null?TEAMS[me.team]:null;
   const myLeaderId=me.team!=null?leaders[me.team]:null; const iAmLeader=myLeaderId===me.id;
   const teammates=me.team!=null?state.players.filter(p=>p.team===me.team&&p.rsvp==="yes"):[];
   const tabs=[["me","My Card"],["team","My Team"],["mission","Mission"],["games","Games"]];
@@ -390,20 +484,73 @@ function PlayerPortal({state,update,logAudit,deepCode}){
       <div className="grid grid-cols-3 gap-2 mt-4"><Stat label="Influence" value={me.ip}/><Stat label="Bars" value={me.tokens}/><Stat label="Status" value={STATUS_LABEL[me.status]||me.status} small/></div></div>
     <div className="flex gap-1">{tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold ${tab===id?'bg-gold text-black':'bg-[#1c1c20] text-[#c9c3b2]'}`}>{l}</button>)}</div>
     {tab==="me"&&(<div className="space-y-4"><div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">📣 Round in play</h3><p className="text-xs text-[#c9c3b2]"><b>{ROUND_FLOW[s.roundIndex]||"Registration"}</b>. Keep your phone down during explanations.</p></div><div className="card p-4"><QRlike text={me.id}/><div className="text-center text-[10px] text-[#8a8578] mt-1">{me.id}</div></div></div>)}
-    {tab==="team"&&(<div className="space-y-4">{me.team==null?<div className="card p-5 text-sm text-[#b9b3a3]">Teams haven't been drawn yet. Your team appears here live once the Game Master runs the team draw. ✨</div>:(<>
+    {tab==="team"&&(<div className="space-y-4">{me.team==null?<div className="card p-5 text-sm text-[#b9b3a3]">Teams haven't been drawn yet. Your House appears here live once the Game Master runs the draw. ✨</div>:(<>
       <div className="card p-5" style={{borderColor:team.ring}}><div className="flex justify-between items-center mb-2"><h3 className="font-bold" style={{color:team.ring}}>{team.name}</h3><Pill>{teammates.length} members</Pill></div>
         {s.showTeammates?<div className="space-y-1">{teammates.map(tm=>(<div key={tm.id} className="flex justify-between text-sm py-1 border-b border-[#2a2a2e]"><span>{tm.displayName} {leaders[me.team]===tm.id&&<span title="Leader">👑</span>} {tm.id===me.id&&<span className="text-[10px] gold">(you)</span>}</span></div>))}</div>:<p className="text-xs text-[#8a8578]">Teammate names are hidden by the organiser for this event.</p>}</div>
       <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🗳️ Vote your team leader</h3><p className="text-[11px] text-[#8a8578] mb-2">Live tally decides the leader. You can change your vote anytime.</p>
         <div className="space-y-1">{teammates.map(tm=>(<button key={tm.id} onClick={()=>voteLeader(tm.id)} className={`w-full flex justify-between px-2 py-1.5 rounded text-sm ${me.leaderVote===tm.id?'bg-gold text-black':'bg-[#1c1c20] hover:border-gold border border-transparent'}`}><span>{tm.displayName}{tm.id===me.id&&" (you)"}</span>{me.leaderVote===tm.id&&<span>✓ your vote</span>}</button>))}</div></div>
       {!iAmLeader&&myLeaderId&&(<div className="card p-5 border border-dashed border-[#3a3a40]"><h3 className="text-sm font-semibold" style={{color:'#e0765f'}}>🤫 Secretly oust your leader</h3><p className="text-[11px] text-[#8a8578] mb-2">Your leader can't see who votes. If a majority opts to oust, leadership passes to the next choice.</p><Btn tone={me.oustVote?"danger":"dark"} onClick={toggleOust}>{me.oustVote?"✓ You voted to oust (tap to undo)":"Vote to oust leader"}</Btn></div>)}
-      <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🕵️ Secretly request a team switch</h3><p className="text-[11px] text-[#8a8578] mb-2">Only the target team's leader sees and decides. If accepted, they swap one of their own members into your current team.</p>
+      <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🕵️ Secretly request a House switch</h3><p className="text-[11px] text-[#8a8578] mb-2">Only the target House's leader sees and decides. If accepted, they swap one of their own members into your current House.</p>
         {(state.joinRequests||[]).find(r=>r.requesterId===me.id&&r.status==="pending")?<Pill color="#f59e0b">Request pending…</Pill>:<div className="flex flex-wrap gap-1">{Array.from({length:s.teamCount}).map((_,ti)=>ti!==me.team&&(<button key={ti} onClick={()=>requestJoin(ti)} className="px-2 py-1 rounded text-xs bg-[#1c1c20] border border-[#2a2a2e] hover:border-gold" style={{color:TEAMS[ti].ring}}>Join {TEAMS[ti].name}</button>))}</div>}</div>
-      {iAmLeader&&(<div className="card p-5 glow"><h3 className="gold font-semibold text-sm mb-2">👑 Leader desk — pending join requests</h3>{myPendingReqsAsLeader.length===0?<p className="text-xs text-[#8a8578]">No secret requests right now.</p>:myPendingReqsAsLeader.map(r=>{const req=state.players.find(p=>p.id===r.requesterId);return(<LeaderReq key={r.id} req={req} team={team} teammates={teammates} me={me} onDecide={(accept,swap)=>decideReq(r.id,accept,swap)}/>);})}</div>)}
+      {iAmLeader&&(<div className="card p-5 glow"><h3 className="gold font-semibold text-sm mb-2">👑 Leader desk — pending requests</h3>{myPendingReqsAsLeader.length===0?<p className="text-xs text-[#8a8578]">No secret requests right now.</p>:myPendingReqsAsLeader.map(r=>{const req=state.players.find(p=>p.id===r.requesterId);return(<LeaderReq key={r.id} req={req} team={team} teammates={teammates} me={me} onDecide={(accept,swap)=>decideReq(r.id,accept,swap)}/>);})}</div>)}
     </>)}</div>)}
-    {tab==="mission"&&(<div className="card p-5 border border-dashed border-[#3a3a40]"><div className="flex items-center gap-2 mb-2"><h3 className="gold font-semibold text-sm">🎯 Your secret mission</h3><Pill color="#f59e0b">CONFIDENTIAL</Pill></div>{mission?(<><div className="flex gap-2 mb-1"><Pill color="#f59e0b">{mission.tier}</Pill><Pill>{mission.cat}</Pill></div><p className="text-[#e9e4d6] text-sm">{mission.obj}</p><p className="text-xs text-[#8a8578] mt-2">Reward +{mission.reward} IP · Penalty −{mission.penalty} IP · Report proof privately to the marshal.</p><p className="text-[10px] text-red-400/80 mt-2">Yours alone — don't show this to other Members.</p></>):<p className="text-[#b9b3a3] text-sm">Your mission appears here once assigned. Check back after check-in.</p>}</div>)}
-    {tab==="games"&&(<div className="space-y-3"><p className="text-xs text-[#8a8578]">Every game, explained simply. The MC also reads all rules aloud on the night.</p>{GAME_GUIDE.map((g,i)=><GameCard key={i} g={g}/>)}<p className="text-[10px] text-[#5f5b52]">Games may still be adjusted before the event — this guide always shows the current line-up.</p></div>)}
-    <button className="text-xs gold underline block mx-auto" onClick={()=>{setPlayer(null);setQ("");}}>← switch member</button>
+    {tab==="mission"&&<MissionTab state={state} me={me} update={update} logAudit={logAudit}/>}
+    {tab==="games"&&(<div className="space-y-3"><p className="text-xs text-[#8a8578]">Every game, explained simply. The MC also reads all rules aloud on the night.</p>{GAME_GUIDE.map((g,i)=><GameCard key={i} g={g}/>)}</div>)}
+    <button className="text-xs text-[#5f5b52] underline block mx-auto hover:text-red-400" onClick={signOut}>sign out of this phone</button>
   </div>);
+}
+/* ---------- Secret missions: number claim + SEQUENTIAL unlock ---------- */
+function MissionTab({state,me,update,logAudit}){
+  const [num,setNum]=useState(""); const [err,setErr]=useState("");
+  const setObj=MISSION_SETS.find(x=>x.n===me.missionNo);
+  const tierDone=me.missionTier||0;  // 0 none, 1 easy done, 2 moderate done, 3 all done
+  const claim=()=>{
+    const n=Number(num);
+    if(!n||n<1||n>MISSION_SETS.length){setErr("Enter a number between 1 and "+MISSION_SETS.length+".");return;}
+    if(state.players.find(p=>p.missionNo===n && p.id!==me.id)){setErr("Number "+n+" has already been claimed. Check your slip.");return;}
+    update(s=>{const t=s.players.find(p=>p.id===me.id);t.missionNo=n;t.missionTier=0;logAudit(s,"Player","Claimed mission number",me.displayName,"—",n,"paper draw");});
+    setErr("");
+  };
+  if(!me.missionNo) return (<div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🎯 Claim your secret mission</h3>
+    <p className="text-xs text-[#b9b3a3] mb-3">You drew a numbered slip on arrival. Enter that number to unlock the missions that belong to you alone.</p>
+    <div className="flex gap-2"><input type="number" min="1" max={MISSION_SETS.length} className={inputCls} placeholder={"1 – "+MISSION_SETS.length} value={num} onChange={e=>{setNum(e.target.value);setErr("")}} onKeyDown={e=>e.key==="Enter"&&claim()}/><Btn onClick={claim}>Unlock</Btn></div>
+    {err&&<div className="text-red-400 text-xs mt-2">{err}</div>}
+    <p className="text-[10px] text-[#5f5b52] mt-3">Each number is unique. Once claimed it locks to you — ask the marshal if you made a mistake.</p></div>);
+  const pct=Math.round((tierDone/3)*100);
+  return (<div className="space-y-3">
+    <div className="card p-4">
+      <div className="flex items-center justify-between mb-2"><div><div className="text-[10px] text-[#8a8578] tracking-widest">YOUR SLIP</div><div className="gold text-2xl font-bold">№ {me.missionNo}</div></div>
+        <div className="text-right"><Pill color="#f59e0b">CONFIDENTIAL</Pill><div className="text-[10px] text-[#8a8578] mt-1">{tierDone}/3 complete</div></div></div>
+      <div className="w-full h-1.5 bg-[#2a2a2e] rounded"><div className="h-1.5 bg-gold rounded transition-all" style={{width:pct+"%"}}/></div>
+    </div>
+    {setObj ? TIERS.map((t,i)=>{
+      const unlocked = i<=tierDone;      // current tier visible, earlier ones done
+      const done     = i<tierDone;
+      return <MissionCard key={t.key} tier={t.label} colour={t.colour} reward={t.reward}
+                text={setObj[t.key]} unlocked={unlocked} done={done}
+                prevLabel={i>0?TIERS[i-1].label:null}/>;
+    }) : <p className="text-sm text-[#b9b3a3]">Mission set not found.</p>}
+    {tierDone>=3 && <div className="card p-4 text-center glow"><div className="text-2xl">🏅</div><p className="gold text-sm font-bold mt-1">All three missions complete</p><p className="text-[11px] text-[#8a8578]">+35 IP banked. Impressive work.</p></div>}
+    <p className="text-[10px] text-red-400/80 text-center">Yours alone. Report each completion privately to the marshal to unlock the next — never show this screen to another Member.</p>
+  </div>);
+}
+function MissionCard({tier,colour,text,reward,unlocked,done,prevLabel}){
+  if(!unlocked) return (
+    <div className="card p-4 border" style={{borderColor:"#2a2a2e"}}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold text-[#5f5b52]">🔒 {tier.toUpperCase()}</span>
+        <Pill color="#5f5b52" bg="rgba(255,255,255,.04)">+{reward} IP</Pill></div>
+      <p className="text-sm tracking-[0.3em] text-[#3f3d38] select-none">✱✱✱✱✱✱✱✱✱✱✱✱✱✱</p>
+      <p className="text-[10px] text-[#5f5b52] mt-2">Unlocks when the marshal verifies your {prevLabel} mission.</p>
+    </div>);
+  return (
+    <div className="card p-4 border" style={{borderColor:colour+"55",opacity:done?.72:1}}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold" style={{color:colour}}>{done?"✔ ":""}{tier.toUpperCase()}</span>
+        <Pill color={colour}>{done?"+"+reward+" IP banked":"+"+reward+" IP"}</Pill></div>
+      <p className={"text-sm "+(done?"line-through text-[#8a8578]":"text-[#e9e4d6]")}>{text}</p>
+      {!done&&<p className="text-[10px] text-[#8a8578] mt-2">Report to the marshal when you've done this.</p>}
+    </div>);
 }
 function LeaderReq({req,team,teammates,me,onDecide}){
   const [swap,setSwap]=useState(""); if(!req)return null;
@@ -414,7 +561,6 @@ function LeaderReq({req,team,teammates,me,onDecide}){
 }
 function GameCard({g}){const [open,setOpen]=useState(false);return (<div className="card p-4"><button className="w-full text-left flex justify-between items-start" onClick={()=>setOpen(!open)}><div><div className="gold font-semibold text-sm">{g.name}</div><div className="text-[10px] text-[#8a8578]">{g.slot}</div></div><span className="gold">{open?"–":"+"}</span></button><p className="text-xs text-[#d3cdbe] mt-2">{g.simple}</p>{open&&<ul className="text-xs text-[#b9b3a3] mt-2 space-y-1 list-disc pl-4">{g.rules.map((r,i)=><li key={i}>{r}</li>)}</ul>}</div>);}
 function Stat({label,value,small}){return <div className="card py-3"><div className={`gold font-bold ${small?'text-sm':'text-2xl'}`}>{value}</div><div className="text-[10px] text-[#8a8578]">{label}</div></div>;}
-// ===================== GAME MASTER =====================
 function GameMaster({state,update,logAudit}){
   const [tab,setTab]=useState("run");
   const tabs=[["run","▶ Run Event"],["setup","Setup"],["audit","Audit"]];
@@ -439,29 +585,24 @@ function GMRun({state,update,logAudit}){
     </div>
     <div className="card p-5"><div className="text-[10px] text-[#8a8578] tracking-widest mb-2">STEP 2 · TIMER</div><BigTimer state={state} update={update}/></div>
     <div className="card p-5"><div className="text-[10px] text-[#8a8578] tracking-widest mb-2">STEP 3 · GIVE OR TAKE POINTS</div><GMScore state={state} update={update} logAudit={logAudit} roundLabel={ROUND_FLOW[idx]}/></div>
-    <p className="text-[10px] text-[#5f5b52] text-center">Teams, missions, jury and the winner reveal live in the Scoreboard + Setup tabs.</p>
   </div>);
 }
-// Scoring with three modes: one / several / whole team
 function GMScore({state,update,logAudit,roundLabel}){
   const [mode,setMode]=useState("one");
   const tc=state.settings.teamCount||4;
-  // ONE
   const [sel,setSel]=useState(null); const [reason,setReason]=useState("");
   const p=state.players.find(x=>x.id===sel);
   const applyOne=(delta,kind)=>{if(!p)return;update(n=>{const t=n.players.find(x=>x.id===sel);if(kind==="ip"){let nv=Math.max(0,t.ip+delta);logAudit(n,"GM",(delta>0?"+":"")+delta+" IP",t.displayName,t.ip,nv,reason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+delta);logAudit(n,"GM",(delta>0?"+":"")+delta+" Bars",t.displayName,t.tokens,nv,reason||roundLabel);t.tokens=nv;}});setReason("");};
   const undo=()=>update(n=>{const last=n.audit[0];if(!last||!last.tgt||last.tgt==="—")return;const t=n.players.find(x=>x.displayName===last.tgt);if(t&&last.act.includes("IP"))t.ip=Number(last.prev)||t.ip;else if(t&&last.act.includes("Bars"))t.tokens=Number(last.prev)||t.tokens;n.audit.unshift({t:Date.now(),op:"GM",act:"UNDO",tgt:last.tgt,prev:last.next,next:last.prev,reason:"undo"});});
-  // SEVERAL
   const [amts,setAmts]=useState({}); const [manyReason,setManyReason]=useState(""); const [manyKind,setManyKind]=useState("ip"); const [q,setQ]=useState("");
   const manyCount=Object.values(amts).filter(v=>Number(v)).length;
   const applyMany=()=>{update(n=>{Object.entries(amts).forEach(([id,val])=>{const d=Number(val);if(!d)return;const t=n.players.find(x=>x.id===id);if(!t)return;if(manyKind==="ip"){let nv=Math.max(0,t.ip+d);logAudit(n,"GM",(d>0?"+":"")+d+" IP",t.displayName,t.ip,nv,manyReason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+d);logAudit(n,"GM",(d>0?"+":"")+d+" Bars",t.displayName,t.tokens,nv,manyReason||roundLabel);t.tokens=nv;}});});setAmts({});setManyReason("");};
   const manyList=[...state.players].sort((a,b)=>a.displayName.localeCompare(b.displayName)).filter(pl=>(pl.displayName+pl.id).toLowerCase().includes(q.toLowerCase()));
-  // TEAM
   const [teamSel,setTeamSel]=useState(0); const [teamPts,setTeamPts]=useState(5); const [teamKind,setTeamKind]=useState("ip"); const [teamReason,setTeamReason]=useState("");
   const teamMembers=state.players.filter(x=>x.team===Number(teamSel));
   const applyTeam=()=>{const d=Number(teamPts);if(!d)return;update(n=>{n.players.filter(x=>x.team===Number(teamSel)).forEach(t=>{if(teamKind==="ip"){let nv=Math.max(0,t.ip+d);logAudit(n,"GM",(d>0?"+":"")+d+" IP (team)",t.displayName,t.ip,nv,teamReason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+d);logAudit(n,"GM",(d>0?"+":"")+d+" Bars (team)",t.displayName,t.tokens,nv,teamReason||roundLabel);t.tokens=nv;}});});};
   return (<div>
-    <div className="flex gap-1 mb-3">{[["one","One player"],["many","Several at once"],["team","Whole team"]].map(([id,l])=><button key={id} onClick={()=>setMode(id)} className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold ${mode===id?'bg-gold text-black':'bg-[#1c1c20] text-[#c9c3b2]'}`}>{l}</button>)}</div>
+    <div className="flex gap-1 mb-3">{[["one","One player"],["many","Several at once"],["team","Whole House"]].map(([id,l])=><button key={id} onClick={()=>setMode(id)} className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold ${mode===id?'bg-gold text-black':'bg-[#1c1c20] text-[#c9c3b2]'}`}>{l}</button>)}</div>
     {mode==="one"&&(<div>
       <select className={inputCls+" mb-3"} value={sel||""} onChange={e=>setSel(e.target.value||null)}><option value="">— pick a player —</option>{[...state.players].sort((a,b)=>a.displayName.localeCompare(b.displayName)).map(pl=><option key={pl.id} value={pl.id}>{pl.displayName} ({pl.ip} IP)</option>)}</select>
       {p?(<div>
@@ -476,24 +617,21 @@ function GMScore({state,update,logAudit,roundLabel}){
     </div>)}
     {mode==="many"&&(<div>
       <p className="text-[11px] text-[#8a8578] mb-2">Type a number beside each player (use −3 to deduct). Then submit them all together.</p>
-      <div className="flex gap-2 mb-2">
-        <input className={inputCls+" flex-1"} placeholder="Search players…" value={q} onChange={e=>setQ(e.target.value)}/>
-        <select className={inputCls+" w-28"} value={manyKind} onChange={e=>setManyKind(e.target.value)}><option value="ip">Points</option><option value="tok">Bars</option></select>
-      </div>
+      <div className="flex gap-2 mb-2"><input className={inputCls+" flex-1"} placeholder="Search players…" value={q} onChange={e=>setQ(e.target.value)}/><select className={inputCls+" w-28"} value={manyKind} onChange={e=>setManyKind(e.target.value)}><option value="ip">Points</option><option value="tok">Bars</option></select></div>
       <div className="card p-2 max-h-64 overflow-auto mb-2">{manyList.map(pl=>(<div key={pl.id} className="flex items-center justify-between gap-2 py-1 border-b border-[#2a2a2e]"><span className="text-sm">{pl.displayName} <span className="text-[10px] text-[#8a8578]">{pl.team!=null?TEAMS[pl.team].name.replace("House ",""):"—"} · {pl.ip} IP</span></span><input type="number" className="w-20 rounded px-2 py-1 bg-[#f4efe2] text-black text-sm" placeholder="0" value={amts[pl.id]||""} onChange={e=>setAmts(a=>({...a,[pl.id]:e.target.value}))}/></div>))}</div>
       <input className={inputCls+" mb-2"} value={manyReason} onChange={e=>setManyReason(e.target.value)} placeholder={"Reason (optional) — defaults to: "+roundLabel}/>
       <div className="flex gap-2"><Btn onClick={applyMany} disabled={manyCount===0}>Submit {manyCount>0?`(${manyCount})`:""} together</Btn><Btn tone="dark" onClick={()=>setAmts({})}>Clear</Btn></div>
     </div>)}
     {mode==="team"&&(<div>
-      <p className="text-[11px] text-[#8a8578] mb-2">Give or take the same amount for every member of a team at once.</p>
+      <p className="text-[11px] text-[#8a8578] mb-2">Give or take the same amount for every member of a House at once.</p>
       <div className="grid grid-cols-2 gap-2 mb-2">
-        <Field label="Team"><select className={inputCls} value={teamSel} onChange={e=>setTeamSel(Number(e.target.value))}>{Array.from({length:tc}).map((_,i)=><option key={i} value={i}>{TEAMS[i].name} ({state.players.filter(x=>x.team===i).length})</option>)}</select></Field>
+        <Field label="House"><select className={inputCls} value={teamSel} onChange={e=>setTeamSel(Number(e.target.value))}>{Array.from({length:tc}).map((_,i)=><option key={i} value={i}>{TEAMS[i].name} ({state.players.filter(x=>x.team===i).length})</option>)}</select></Field>
         <Field label="Kind"><select className={inputCls} value={teamKind} onChange={e=>setTeamKind(e.target.value)}><option value="ip">Points</option><option value="tok">Bars</option></select></Field>
       </div>
       <Field label="Amount (use a negative number to deduct)"><input type="number" className={inputCls} value={teamPts} onChange={e=>setTeamPts(e.target.value)}/></Field>
       <input className={inputCls+" mb-2"} value={teamReason} onChange={e=>setTeamReason(e.target.value)} placeholder={"Reason (optional) — defaults to: "+roundLabel}/>
       <div className="text-[11px] text-[#8a8578] mb-2">Applies to {teamMembers.length} member(s): {teamMembers.map(m=>m.displayName).join(", ")||"—"}</div>
-      <Btn onClick={applyTeam} disabled={!teamMembers.length}>Apply to whole team</Btn>
+      <Btn onClick={applyTeam} disabled={!teamMembers.length}>Apply to whole House</Btn>
     </div>)}
   </div>);
 }
@@ -522,7 +660,7 @@ function BigTimer({state,update}){
 }
 function GMSetup({state,update,logAudit}){
   const [sub,setSub]=useState("teams");
-  const subs=[["teams","Teams"],["missions","Missions"],["jury","Jury"],["data","Data"]];
+  const subs=[["teams","Houses"],["missions","Missions"],["jury","Jury"],["data","Data"]];
   return (<div><div className="flex gap-1 flex-wrap mb-3">{subs.map(([id,l])=><button key={id} onClick={()=>setSub(id)} className={`px-2.5 py-1 rounded text-xs font-semibold ${sub===id?'bg-gold text-black':'bg-[#1c1c20] text-[#c9c3b2]'}`}>{l}</button>)}</div>
     {sub==="teams"&&<GMTeams state={state} update={update} logAudit={logAudit}/>}
     {sub==="missions"&&<GMMissions state={state} update={update} logAudit={logAudit}/>}
@@ -532,24 +670,48 @@ function GMSetup({state,update,logAudit}){
 }
 function GMTeams({state,update,logAudit}){
   const tc=state.settings.teamCount||4; const leaders=useMemo(()=>computeLeaders(state),[state]);
-  const drawLive=()=>update(n=>{const pool=n.players.filter(p=>p.rsvp==="yes");for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}pool.forEach((p,idx)=>{const t=n.players.find(x=>x.id===p.id);t.team=idx%tc;t.playerNumber=idx+1;t.leaderVote=null;t.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","LIVE team draw",tc+" teams","—","random","game-day draw");});
-  const clear=()=>update(n=>{n.players.forEach(p=>{p.team=null;p.playerNumber=null;p.leaderVote=null;p.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","Cleared teams","all","—","—","");});
+  const drawLive=()=>update(n=>{const pool=n.players.filter(p=>p.rsvp==="yes");for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}pool.forEach((p,idx)=>{const t=n.players.find(x=>x.id===p.id);t.team=idx%tc;t.playerNumber=idx+1;t.leaderVote=null;t.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","LIVE House draw",tc+" Houses","—","random","game-day draw");});
+  const clear=()=>update(n=>{n.players.forEach(p=>{p.team=null;p.playerNumber=null;p.leaderVote=null;p.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","Cleared Houses","all","—","—","");});
   const move=(id,t)=>update(n=>{const pl=n.players.find(x=>x.id===id);const prev=pl.team!=null?TEAMS[pl.team].name:"—";pl.team=t===""?null:Number(t);logAudit(n,"GM","Manual move",pl.displayName,prev,t===""?"—":TEAMS[Number(t)].name,"override");});
   const teams=Array.from({length:tc},(_,i)=>({...TEAMS[i],idx:i,members:state.players.filter(p=>p.team===i&&p.rsvp==="yes")}));
-  return (<div><div className="flex gap-2 mb-4 flex-wrap"><Btn onClick={drawLive}>🎲 Draw {tc} teams LIVE</Btn><Btn tone="dark" onClick={clear}>Clear teams</Btn><span className="text-[11px] text-[#8a8578] self-center">Randomly assigns confirmed players; reflects instantly on every portal + scoreboard.</span></div>
-    <div className="grid md:grid-cols-4 gap-3">{teams.map(h=>(<div key={h.idx} className="card p-3" style={{borderColor:h.ring}}><div className="font-bold text-sm mb-2" style={{color:h.ring}}>{h.name} <span className="text-[#8a8578]">({h.members.length})</span></div>{h.members.map(m=>(<div key={m.id} className="flex items-center justify-between text-xs py-1"><span>{m.displayName}{leaders[h.idx]===m.id&&" 👑"}{m.committee&&<span className="gold"> ★</span>}</span><select className="text-[10px] rounded bg-[#f4efe2] text-black" value={m.team} onChange={e=>move(m.id,e.target.value)}>{teams.map(hh=><option key={hh.idx} value={hh.idx}>{hh.name.replace("House ","")}</option>)}<option value="">—</option></select></div>))}</div>))}</div>
-    <p className="text-[10px] text-[#8a8578] mt-3">👑 = live-voted leader · ★ = committee member.</p></div>);
+  return (<div><div className="flex gap-2 mb-4 flex-wrap"><Btn onClick={drawLive}>🎲 Draw {tc} Houses LIVE</Btn><Btn tone="dark" onClick={clear}>Clear Houses</Btn><span className="text-[11px] text-[#8a8578] self-center">Randomly assigns confirmed players; reflects instantly on every portal + scoreboard.</span></div>
+    <div className="grid md:grid-cols-3 gap-3">{teams.map(h=>(<div key={h.idx} className="card p-3" style={{borderColor:h.ring}}><div className="font-bold text-sm mb-2" style={{color:h.ring}}>{h.name} <span className="text-[#8a8578]">({h.members.length})</span></div>{h.members.map(m=>(<div key={m.id} className="flex items-center justify-between text-xs py-1"><span>{m.displayName}{leaders[h.idx]===m.id&&" 👑"}</span><select className="text-[10px] rounded bg-[#f4efe2] text-black" value={m.team} onChange={e=>move(m.id,e.target.value)}>{teams.map(hh=><option key={hh.idx} value={hh.idx}>{hh.name.replace("House ","")}</option>)}<option value="">—</option></select></div>))}</div>))}</div>
+    <p className="text-[10px] text-[#8a8578] mt-3">👑 = live-voted leader.</p></div>);
 }
+/* ---------- GM mission verification: unlock one tier at a time ---------- */
 function GMMissions({state,update,logAudit}){
-  const assign=()=>update(n=>{n.players.filter(p=>p.rsvp==="yes").forEach((p,i)=>{const t=n.players.find(x=>x.id===p.id);t.mission=SECRET_MISSIONS[i%SECRET_MISSIONS.length].id;t.missionDone=false;});logAudit(n,"GM","Assigned secret missions","all confirmed","—","assigned","");});
-  const verify=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const m=SECRET_MISSIONS.find(x=>x.id===t.mission);if(!m)return;t.missionDone=true;t.ip+=m.reward;logAudit(n,"GM","Mission verified +"+m.reward,t.displayName,t.ip-m.reward,t.ip,m.id);});
-  const fail=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const m=SECRET_MISSIONS.find(x=>x.id===t.mission);if(!m)return;t.ip=Math.max(0,t.ip-m.penalty);logAudit(n,"GM","Mission failed −"+m.penalty,t.displayName,t.ip+m.penalty,t.ip,m.id);});
-  return (<div><div className="flex gap-2 mb-3"><Btn onClick={assign}>🎯 Auto-assign missions</Btn></div><div className="card p-4 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-1">Member</th><th className="text-left p-1">Mission</th><th className="text-left p-1">Tier</th><th className="p-1">Status</th><th className="p-1">Verify</th></tr></thead><tbody>{state.players.filter(p=>p.mission).map(p=>{const m=SECRET_MISSIONS.find(x=>x.id===p.mission);return(<tr key={p.id} className="border-t border-[#2a2a2e]"><td className="p-1">{p.displayName}</td><td className="p-1 text-xs text-[#c9c3b2]">{m?.obj}</td><td className="p-1"><Pill color="#f59e0b">{m?.tier}</Pill></td><td className="p-1 text-center">{p.missionDone?<span className="text-green-400">✔</span>:<span className="text-[#8a8578]">pending</span>}</td><td className="p-1 text-center whitespace-nowrap"><Btn tone="dark" onClick={()=>verify(p.id)}>✔</Btn> <Btn tone="danger" onClick={()=>fail(p.id)}>✕</Btn></td></tr>);})}</tbody></table></div></div>);
+  const claimed=state.players.filter(p=>p.missionNo).sort((a,b)=>a.missionNo-b.missionNo);
+  const taken=new Set(claimed.map(p=>p.missionNo));
+  const verifyNext=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const cur=t.missionTier||0;if(cur>=3)return;
+    const tier=TIERS[cur]; const nv=Math.max(0,t.ip+tier.reward);
+    logAudit(n,"GM","Mission "+tier.label+" verified +"+tier.reward,t.displayName,t.ip,nv,"№"+t.missionNo);
+    t.ip=nv; t.missionTier=cur+1;});
+  const stepBack=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const cur=t.missionTier||0;if(cur<=0)return;
+    const tier=TIERS[cur-1]; const nv=Math.max(0,t.ip-tier.reward);
+    logAudit(n,"GM","Undid "+tier.label+" −"+tier.reward,t.displayName,t.ip,nv,"correction"); t.ip=nv; t.missionTier=cur-1;});
+  const clearOne=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);logAudit(n,"GM","Cleared slip number",t.displayName,t.missionNo,"—","marshal fix");t.missionNo=null;t.missionTier=0;});
+  return (<div className="space-y-3">
+    <div className="card p-4"><h3 className="gold font-semibold text-sm mb-1">Numbered slips (1–{MISSION_SETS.length})</h3>
+      <p className="text-xs text-[#8a8578] mb-3">Guests draw a paper number and enter it in their portal. Each number unlocks a unique set. Missions reveal <b className="gold">one tier at a time</b> — verify Easy to unlock Moderate, then Hard.</p>
+      <div className="flex flex-wrap gap-1">{MISSION_SETS.map(m=><span key={m.n} className="px-2 py-0.5 rounded text-[11px] font-semibold" style={{background:taken.has(m.n)?"#d4af37":"#1c1c20",color:taken.has(m.n)?"#000":"#5f5b52"}}>{m.n}</span>)}</div>
+      <p className="text-[10px] text-[#5f5b52] mt-2">Gold = claimed ({claimed.length}/{MISSION_SETS.length})</p></div>
+    <div className="card p-4 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-1">Member</th><th className="p-1">№</th><th className="text-left p-1">Progress</th><th className="p-1">Next to verify</th><th className="p-1"></th></tr></thead>
+      <tbody>{claimed.length===0?<tr><td colSpan="5" className="p-3 text-center text-[#8a8578] text-xs">No numbers claimed yet.</td></tr>:claimed.map(p=>{
+        const cur=p.missionTier||0; const nextTier=cur<3?TIERS[cur]:null; const setObj=MISSION_SETS.find(x=>x.n===p.missionNo);
+        return (<tr key={p.id} className="border-t border-[#2a2a2e] align-top">
+          <td className="p-1">{p.displayName}</td>
+          <td className="p-1 text-center gold font-bold">{p.missionNo}</td>
+          <td className="p-1"><div className="flex gap-1">{TIERS.map((t,i)=><span key={t.key} className="w-6 h-1.5 rounded" style={{background:i<cur?t.colour:"#2a2a2e"}}/>)}</div><div className="text-[10px] text-[#8a8578] mt-1">{cur}/3 done</div></td>
+          <td className="p-1 text-center">{nextTier?(<div><div className="text-[10px] mb-1" style={{color:nextTier.colour}}>{nextTier.label} · +{nextTier.reward}</div>
+              <div className="text-[10px] text-[#8a8578] max-w-[220px] mb-1">{setObj?setObj[nextTier.key]:""}</div>
+              <Btn onClick={()=>verifyNext(p.id)}>✔ Verify {nextTier.label}</Btn></div>):<span className="text-green-400 text-xs">🏅 all done</span>}</td>
+          <td className="p-1 text-center whitespace-nowrap"><button className="text-[10px] text-[#5f5b52] underline hover:text-gold block" onClick={()=>stepBack(p.id)}>undo tier</button><button className="text-[10px] text-[#5f5b52] underline hover:text-red-400 block mt-1" onClick={()=>clearOne(p.id)}>reset slip</button></td></tr>);})}</tbody></table></div>
+  </div>);
 }
 function GMJury({state,update,logAudit}){
   const finalists=state.players.filter(p=>p.status==="finalist"||p.status==="chair");
   const cast=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const cur=n.jury[id]||0;n.jury[id]=cur+1;logAudit(n,"GM","Jury vote",t.displayName,cur,cur+1,"jury");});
-  const applyBonus=()=>update(n=>{const fs=n.players.filter(p=>p.status==="finalist"||p.status==="chair");const sorted=[...fs].sort((a,b)=>b.ip-a.ip);const margin=sorted.length>1?Math.max(0,sorted[0].ip-sorted[1].ip):15;fs.forEach(p=>{const votes=n.jury[p.id]||0;let bonus=Math.min(votes*3,CAPS["Jury Bonus"],margin);logAudit(n,"GM","Jury bonus (capped)",p.displayName,p.ip,p.ip+bonus,`votes ${votes}, cap ${Math.min(15,margin)}`);p.ip+=bonus;});});
+  const applyBonus=()=>update(n=>{const fs=n.players.filter(p=>p.status==="finalist"||p.status==="chair");const sorted=[...fs].sort((a,b)=>b.ip-a.ip);const margin=sorted.length>1?Math.max(0,sorted[0].ip-sorted[1].ip):15;fs.forEach(p=>{const votes=n.jury[p.id]||0;let bonus=Math.min(votes*3,CAPS["Jury Bonus"],margin);logAudit(n,"GM","Jury bonus (capped)",p.displayName,p.ip,p.ip+bonus,"votes "+votes);p.ip+=bonus;});});
   const setStatus=(id,st)=>update(n=>{const t=n.players.find(x=>x.id===id);logAudit(n,"GM","Status → "+STATUS_LABEL[st],t.displayName,STATUS_LABEL[t.status],STATUS_LABEL[st],"stage");t.status=st;});
   return (<div className="space-y-4"><div className="card p-5"><h3 className="gold font-semibold mb-1">Stage status (set finalists)</h3><p className="text-xs text-[#8a8578] mb-2">Mark your final players, then run the jury.</p>
     <div className="max-h-48 overflow-auto space-y-1">{[...state.players].sort((a,b)=>b.ip-a.ip).slice(0,12).map(p=>(<div key={p.id} className="flex items-center justify-between text-sm"><span>{p.displayName} <span className="text-[#8a8578] text-xs">· {p.ip} IP · {STATUS_LABEL[p.status]}</span></span><div className="flex gap-1"><Btn tone="dark" onClick={()=>setStatus(p.id,"finalist")}>Finalist</Btn><Btn tone="danger" onClick={()=>setStatus(p.id,"frozen")}>Freeze</Btn><Btn onClick={()=>setStatus(p.id,"chair")}>👑</Btn></div></div>))}</div></div>
@@ -558,10 +720,18 @@ function GMJury({state,update,logAudit}){
 function AuditView({state}){return (<div className="card p-4"><h3 className="gold font-semibold text-sm mb-2">Audit log ({state.audit.length})</h3><div className="max-h-[500px] overflow-auto text-xs"><table className="w-full"><thead><tr className="text-[#8a8578]"><th className="text-left p-1">Time</th><th className="text-left p-1">Op</th><th className="text-left p-1">Action</th><th className="text-left p-1">Target</th><th className="p-1">From→To</th><th className="text-left p-1">Reason</th></tr></thead><tbody>{state.audit.map((a,i)=>(<tr key={i} className="border-t border-[#2a2a2e]"><td className="p-1 text-[#8a8578]">{new Date(a.t).toLocaleTimeString()}</td><td className="p-1">{a.op}</td><td className="p-1">{a.act}</td><td className="p-1">{a.tgt}</td><td className="p-1 text-center">{a.prev}→{a.next}</td><td className="p-1 text-[#8a8578]">{a.reason}</td></tr>))}</tbody></table></div></div>);}
 function DataTab({state,update,logAudit}){
   const fileRef=useRef();
-  const exportCSV=()=>{const cols=["id","fullName","displayName","phone","email","rsvp","checkedIn","team","playerNumber","ip","tokens","status","sample"];const rows=[cols.join(",")].concat(state.players.map(p=>cols.map(c=>{let v=p[c];if(c==="team")v=p.team!=null?TEAMS[p.team].name:"";return `"${String(v??"").replace(/"/g,'""')}"`;}).join(",")));const blob=new Blob([rows.join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="syndicate_guests.csv";a.click();};
-  const importCSV=(e)=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const lines=r.result.split(/\r?\n/).filter(Boolean);const head=lines[0].split(",").map(h=>h.replace(/"/g,"").trim());const idx=k=>head.indexOf(k);update(n=>{lines.slice(1).forEach(line=>{const cells=line.match(/("([^"]|"")*"|[^,]*)/g).filter((_,i)=>i%2===0).map(c=>c.replace(/^"|"$/g,"").replace(/""/g,'"'));const name=cells[idx("fullName")]||cells[idx("displayName")];if(!name)return;const email=cells[idx("email")]||"";if(email&&n.players.find(p=>(p.email||"").toLowerCase()===email.toLowerCase()))return;n.players.push({id:uid("IMP"),fullName:name,displayName:cells[idx("displayName")]||name.split(" ")[0],phone:cells[idx("phone")]||"",email,rsvp:cells[idx("rsvp")]||"yes",checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",mission:null,missionDone:false,leaderVote:null,oustVote:false,committee:false,photoConsent:true,dietary:"",notes:"imported",sample:false});});logAudit(n,"GM","CSV import",f.name,"—",(lines.length-1)+" rows","");});};r.readAsText(f);};
-  const reset=()=>{if(confirm("Reset ALL data and reload SAMPLE DATA?")){localStorage.removeItem(KEY);if(window.SyndicateFB)window.SyndicateFB.push(null);location.reload();}};
-  return (<div className="grid md:grid-cols-2 gap-4"><div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Import / Export / Reset</h3><div className="flex flex-wrap gap-2"><Btn onClick={exportCSV}>⬇ Export CSV</Btn><Btn tone="ghost" onClick={()=>fileRef.current.click()}>⬆ Import CSV</Btn><input type="file" ref={fileRef} accept=".csv" className="hidden" onChange={importCSV}/><Btn tone="danger" onClick={reset}>♻ Reset to SAMPLE</Btn></div><p className="text-[10px] text-[#8a8578] mt-3">Data persists in this browser and syncs via Firebase when online.</p></div><div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Note</h3><p className="text-xs text-[#8a8578]">Event details (name, date, address, teams) are edited in the <b className="gold">Admin</b> panel (PIN 0011).</p></div></div>);
+  const exportCSV=()=>{const cols=["id","fullName","displayName","phone","email","rsvp","checkedIn","team","playerNumber","ip","tokens","status","missionNo","missionTier","sample"];const rows=[cols.join(",")].concat(state.players.map(p=>cols.map(c=>{let v=p[c];if(c==="team")v=p.team!=null?TEAMS[p.team].name:"";return `"${String(v??"").replace(/"/g,'""')}"`;}).join(",")));const blob=new Blob([rows.join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="syndicate_guests.csv";a.click();};
+  const importCSV=(e)=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const lines=r.result.split(/\r?\n/).filter(Boolean);const head=lines[0].split(",").map(h=>h.replace(/"/g,"").trim());const idx=k=>head.indexOf(k);update(n=>{lines.slice(1).forEach(line=>{const cells=line.match(/("([^"]|"")*"|[^,]*)/g).filter((_,i)=>i%2===0).map(c=>c.replace(/^"|"$/g,"").replace(/""/g,'"'));const name=cells[idx("fullName")]||cells[idx("displayName")];if(!name)return;const email=cells[idx("email")]||"";if(email&&n.players.find(p=>(p.email||"").toLowerCase()===email.toLowerCase()))return;n.players.push({id:uid("IMP"),fullName:name,displayName:cells[idx("displayName")]||name.split(" ")[0],phone:cells[idx("phone")]||"",email,rsvp:cells[idx("rsvp")]||"yes",checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",missionNo:null,missionTier:0,leaderVote:null,oustVote:false,committee:false,photoConsent:true,notes:"imported",sample:false});});logAudit(n,"GM","CSV import",f.name,"—",(lines.length-1)+" rows","");});};r.readAsText(f);};
+  const goLive=()=>{if(confirm("Clear the sample roster and start a clean, empty guest list for launch?\n\nYour event settings (date, capacity, Houses) are kept. This cannot be undone."))
+    {update(n=>{n.players=[];n.teamLeaders={};n.joinRequests=[];n.jury={};logAudit(n,"Admin","Cleared roster for launch","—","","0 players","go-live");});}};
+  const reset=()=>{if(confirm("DANGER: wipe everything and reload SAMPLE DATA?")){localStorage.removeItem(KEY);if(window.SyndicateFB)window.SyndicateFB.push(null);location.reload();}};
+  return (<div className="grid md:grid-cols-2 gap-4">
+    <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Backup & launch</h3>
+      <div className="flex flex-wrap gap-2"><Btn onClick={exportCSV}>⬇ Export CSV</Btn><Btn onClick={goLive}>🚀 Go live (clear roster)</Btn><Btn tone="ghost" onClick={()=>fileRef.current.click()}>⬆ Import CSV</Btn><input type="file" ref={fileRef} accept=".csv" className="hidden" onChange={importCSV}/></div>
+      <p className="text-[10px] text-[#8a8578] mt-3"><b>Go live</b> empties the guest list but keeps your settings — use it once, just before sending invites. Export CSV regularly as your offline backup.</p></div>
+    <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Danger zone</h3><Btn tone="danger" onClick={reset}>♻ Reset everything to SAMPLE</Btn>
+      <p className="text-[10px] text-[#8a8578] mt-3">Never press this once real guests have registered — it wipes the roster and restores demo players.</p></div>
+  </div>);
 }
 function Scorekeeper({state,update,logAudit}){
   const s=state.settings; const [q,setQ]=useState(""); const [f,setF]=useState("all"); const [sort,setSort]=useState("ip");
@@ -571,8 +741,8 @@ function Scorekeeper({state,update,logAudit}){
   const confirmed=state.players.filter(p=>p.rsvp==="yes").length; const inHouse=state.players.filter(p=>p.checkedIn).length;
   return (<div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"><KPI label="Confirmed" value={confirmed}/><KPI label="Checked in" value={inHouse}/><KPI label="Capacity" value={`${confirmed}/${s.capacity}`}/><KPI label="Waitlist" value={state.players.filter(p=>p.rsvp==="waitlist").length}/></div>
     <div className="card p-3 mb-3 flex flex-wrap gap-2 items-center"><input className={inputCls+" flex-1 min-w-[160px]"} placeholder="Search name or ID…" value={q} onChange={e=>setQ(e.target.value)}/><select className={inputCls+" w-auto"} value={f} onChange={e=>setF(e.target.value)}><option value="all">All</option><option value="confirmed">Confirmed</option><option value="checkedin">Checked in</option><option value="waitlist">Waitlist</option></select><select className={inputCls+" w-auto"} value={sort} onChange={e=>setSort(e.target.value)}><option value="ip">Sort: IP</option><option value="name">Sort: Name</option><option value="num">Sort: Player #</option></select></div>
-    <div className="card p-2 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-2">Member</th><th className="p-2">Team</th><th className="p-2">IP</th><th className="p-2">Bars</th><th className="p-2">Status</th><th className="p-2">Check-in</th></tr></thead><tbody>{list.map(p=>(<tr key={p.id} className="border-t border-[#2a2a2e]"><td className="p-2">{p.displayName} {p.sample&&<Pill color="#f59e0b">SAMPLE</Pill>}<div className="text-[10px] text-[#5f5b52]">{p.id}</div></td><td className="p-2 text-center text-xs">{p.team!=null?TEAMS[p.team].name.replace("House ",""):"—"}</td><td className="p-2 text-center gold font-bold">{p.ip}</td><td className="p-2 text-center">{p.tokens}</td><td className="p-2 text-center text-xs">{STATUS_LABEL[p.status]}</td><td className="p-2 text-center"><button onClick={()=>checkIn(p.id)} className={`px-2 py-1 rounded text-xs font-semibold ${p.checkedIn?'bg-green-700 text-white':'border border-gold gold'}`}>{p.checkedIn?"✔ In":"Check in"}</button></td></tr>))}</tbody></table>{list.length===0&&<p className="text-center text-sm text-[#8a8578] p-4">No matches.</p>}</div>
-    <p className="text-[10px] text-[#8a8578] mt-2">Scorekeeper = the private door clipboard: check people in and find anyone fast. Private fields (phone, email) stay hidden.</p></div>);
+    <div className="card p-2 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-2">Member</th><th className="p-2">House</th><th className="p-2">№</th><th className="p-2">Missions</th><th className="p-2">IP</th><th className="p-2">Check-in</th></tr></thead><tbody>{list.map(p=>(<tr key={p.id} className="border-t border-[#2a2a2e]"><td className="p-2">{p.displayName} {p.sample&&<Pill color="#f59e0b">SAMPLE</Pill>}<div className="text-[10px] text-[#5f5b52]">{p.id}</div></td><td className="p-2 text-center text-xs">{p.team!=null?TEAMS[p.team].name.replace("House ",""):"—"}</td><td className="p-2 text-center text-xs gold">{p.missionNo||"—"}</td><td className="p-2 text-center text-xs">{(p.missionTier||0)}/3</td><td className="p-2 text-center gold font-bold">{p.ip}</td><td className="p-2 text-center"><button onClick={()=>checkIn(p.id)} className={`px-2 py-1 rounded text-xs font-semibold ${p.checkedIn?'bg-green-700 text-white':'border border-gold gold'}`}>{p.checkedIn?"✔ In":"Check in"}</button></td></tr>))}</tbody></table>{list.length===0&&<p className="text-center text-sm text-[#8a8578] p-4">No matches.</p>}</div>
+    <p className="text-[10px] text-[#8a8578] mt-2">Scorekeeper = the private door clipboard. Private fields (phone, email) stay hidden.</p></div>);
 }
 function KPI({label,value}){return <div className="card p-3 text-center"><div className="gold text-2xl font-bold">{value}</div><div className="text-[10px] text-[#8a8578]">{label}</div></div>;}
 function Scoreboard({state,update}){
@@ -585,9 +755,8 @@ function Scoreboard({state,update}){
   if(reveal)return (<div className="text-center py-16 rise"><div className="text-6xl mb-4">👑</div><div className="text-[#8a8578] tracking-widest">THE CHAIR OF THE SYNDICATE</div><h1 className="gold text-5xl md:text-7xl font-black my-4">{chair?.displayName||"—"}</h1><div className="text-2xl">{chair?.ip} Influence</div><div className="mt-8"><Btn tone="dark" onClick={()=>update(n=>n.settings.revealWinner=false)}>Exit reveal</Btn></div></div>);
   return (<div className={projector?"fixed inset-0 bg-black z-50 overflow-auto p-8":""}>
     <div className="flex justify-between items-center mb-4 flex-wrap gap-2"><div><h2 className="gold text-2xl font-black tracking-wider">LIVE STANDINGS</h2><div className="text-xs text-[#8a8578]">Round: {ROUND_FLOW[s.roundIndex]||"Registration"} {suspense&&"· 🔒 SUSPENSE"}</div></div><div className="flex gap-2"><Btn tone="dark" onClick={()=>update(n=>n.settings.suspense=!n.settings.suspense)}>{suspense?"Show totals":"Suspense mode"}</Btn><Btn tone="ghost" onClick={()=>setProjector(!projector)}>{projector?"Exit projector":"📺 Projector"}</Btn><Btn onClick={()=>update(n=>n.settings.revealWinner=true)}>👑 Reveal Chair</Btn></div></div>
-    <div className="grid md:grid-cols-2 gap-4"><div className="card p-5"><h3 className="gold font-bold mb-3">🏛️ Teams</h3>{teams.map((h,i)=>(<div key={h.idx} className="flex items-center gap-3 py-2 border-b border-[#2a2a2e]"><div className="w-6 text-center font-bold gold">{i+1}</div><div className="w-3 h-6 rounded" style={{background:h.ring}}/><div className="flex-1">{h.name}<div className="text-[10px] text-[#8a8578]">{h.members} members {leaders[h.idx]&&"· leader 👑"}</div></div><div className="gold font-bold text-lg">{suspense?"•••":h.total}</div></div>))}</div>
+    <div className="grid md:grid-cols-2 gap-4"><div className="card p-5"><h3 className="gold font-bold mb-3">🏛️ Houses</h3>{teams.map((h,i)=>(<div key={h.idx} className="flex items-center gap-3 py-2 border-b border-[#2a2a2e]"><div className="w-6 text-center font-bold gold">{i+1}</div><div className="w-3 h-6 rounded" style={{background:h.ring}}/><div className="flex-1">{h.name}<div className="text-[10px] text-[#8a8578]">{h.members} members {leaders[h.idx]&&"· leader 👑"}</div></div><div className="gold font-bold text-lg">{suspense?"•••":h.total}</div></div>))}</div>
       <div className="card p-5"><h3 className="gold font-bold mb-3">🎯 Individuals (top 12)</h3>{indiv.slice(0,12).map((p,i)=>(<div key={p.id} className="flex items-center gap-3 py-1.5 border-b border-[#2a2a2e]"><div className="w-6 text-center font-bold gold">{i+1}</div><div className="flex-1 text-sm">{p.displayName}<span className="ml-1 text-[10px]">{p.status==="frozen"?"❄️":p.status==="qualified"?"✅":p.status==="finalist"?"⭐":""}</span></div><div className="text-xs text-[#8a8578]">{p.tokens}⚑</div><div className="gold font-bold">{suspense?"•••":p.ip}</div></div>))}</div></div>
-    <div className="text-center text-[10px] text-[#5f5b52] mt-4">Scoreboard = the big public screen. Auto-updates live across devices · backup: export CSV → Google Sheet on the TV.</div>
   </div>);
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
