@@ -31,10 +31,10 @@
       const stateRef = db.ref("syndicate/state");
       window.SyndicateFB = {
         push: (state) => { try { stateRef.set(JSON.parse(JSON.stringify(state)))
-            .catch(e => { window.SYNDICATE_STATUS = { state: "error", error: "Write blocked: " + e.message + "  → Realtime Database → Rules → set .read/.write to true → Publish." }; });
+            .catch(e => { window.SYNDICATE_STATUS = { state: "error", error: "Write blocked: " + e.message }; });
           } catch (e) { window.SYNDICATE_STATUS = { state: "error", error: "Push failed: " + e.message }; } },
         subscribe: (cb) => stateRef.on("value", snap => cb(snap.val()),
-          err => { window.SYNDICATE_STATUS = { state: "error", error: "Read blocked: " + err.message + "  → set database Rules .read/.write to true and Publish." }; }),
+          err => { window.SYNDICATE_STATUS = { state: "error", error: "Read blocked: " + err.message }; }),
       };
       db.ref(".info/connected").on("value", snap => { if (window.SYNDICATE_STATUS.state !== "error") window.SYNDICATE_STATUS = { state: snap.val() ? "live" : "connecting", error: "" }; });
     }
@@ -61,13 +61,14 @@
 <script type="text/babel">
 const { useState, useEffect, useMemo, useRef } = React;
 /* ============================================================
-   THE SYNDICATE — Event Command App (v7)
-   v7 adds:
-   • Sequential secret missions: Easy unlocks Moderate unlocks Hard.
-     Locked tiers show ✱✱✱✱ with the points on offer.
-   • Richer home-page hero: maze / circuit / brain motif artwork.
-   Carried: 35 numbered mission sets, capacity 35, persistent phone
-   sign-in, Go-live roster clear, live Firebase sync (hydrate-first).
+   THE SYNDICATE — Event Command App (v8)
+   v8 FIX: restored the missing `note` state in RSVP that caused
+   blank RSVP / Player screens in v7. Added an ErrorBoundary so a
+   single component error can never blank the whole app again.
+   Features: 35 numbered mission sets with SEQUENTIAL unlock
+   (Easy -> Moderate -> Hard), maze/brain hero art, capacity 35,
+   5 Houses, persistent phone sign-in, Go-live roster clear,
+   live Firebase sync with hydrate-first guard.
    ============================================================ */
 const EMAILJS = { publicKey:"Y6x7j5hwzytzCJOyR", serviceId:"service_wfcmvps", templateId:"template_42xo2sm" };
 try { if (window.emailjs && EMAILJS.publicKey.indexOf("YOUR_")!==0) emailjs.init({publicKey:EMAILJS.publicKey}); } catch(e){}
@@ -111,7 +112,6 @@ const TEAMS = [
   { name:"House Crimson",ring:"#c05f74", color:"#7a2233" },
 ];
 const STATUS_LABEL = { active:"Active", qualified:"Qualified", semifinalist:"Semi-finalist", finalist:"Finalist", frozen:"Frozen out", redeemed:"Redeemed", chair:"THE CHAIR" };
-// 35 unique mission sets — each number has its OWN Easy / Moderate / Hard mission.
 const MISSION_SETS = [
  {n:1,  e:"Learn the display names of 3 Members from a House that is not yours.", m:"Persuade someone to gift you 1 Bar without trading anything back.", h:"Finish a round holding more Bars than your own Team Leader."},
  {n:2,  e:"Find out which Member travelled the furthest to be here tonight.", m:"Get two Members who had not met before tonight to trade with each other.", h:"Be publicly thanked by a rival House for something you did."},
@@ -192,12 +192,26 @@ function Btn({children,onClick,tone="gold",className="",disabled}){
 }
 function Field({label,children}){return <label className="block text-sm mb-3"><span className="block mb-1 text-[#b9b3a3]">{label}</span>{children}</label>;}
 const inputCls="w-full rounded-lg px-3 py-2 bg-[#f4efe2] text-black outline-none focus:ring-2 focus:ring-yellow-500";
+// Safety net: a crash in one screen shows a message instead of blanking the app
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(err){return {err};}
+  componentDidUpdate(prev){ if(prev.resetKey!==this.props.resetKey && this.state.err) this.setState({err:null}); }
+  render(){ if(this.state.err) return (
+    <div className="max-w-lg mx-auto card p-6 text-center">
+      <div className="text-3xl mb-2">⚠️</div>
+      <h3 className="gold font-bold mb-1">This screen hit a problem</h3>
+      <p className="text-xs text-[#b9b3a3] mb-3">Your data is safe. Try another tab, or reload the page.</p>
+      <p className="text-[10px] text-[#5f5b52] break-words">{String(this.state.err&&this.state.err.message||this.state.err)}</p>
+      <div className="mt-4"><Btn onClick={()=>location.reload()}>Reload</Btn></div>
+    </div>); return this.props.children; }
+}
 function computeLeaders(state){
   const leaders={}; const tc=state.settings.teamCount||4;
   for(let t=0;t<tc;t++){
     const members=state.players.filter(p=>p.team===t && p.rsvp==="yes");
     if(!members.length){leaders[t]=null;continue;}
-    const stored=state.teamLeaders?.[t];
+    const stored=state.teamLeaders?state.teamLeaders[t]:null;
     const ousters=members.filter(m=>m.oustVote).length; const majority=Math.floor(members.length/2)+1;
     const tally={}; members.forEach(m=>{if(m.leaderVote)tally[m.leaderVote]=(tally[m.leaderVote]||0)+1;});
     let best=null,bestN=-1;
@@ -207,7 +221,6 @@ function computeLeaders(state){
   }
   return leaders;
 }
-// ---------- Hero artwork: maze / circuit / brain motif ----------
 function HeroArt(){
   return (
     <svg viewBox="0 0 420 200" className="w-full max-w-lg mx-auto floaty" style={{opacity:.95}}>
@@ -219,22 +232,15 @@ function HeroArt(){
         <radialGradient id="glow2"><stop offset="0%" stopColor="#d4af37" stopOpacity=".28"/><stop offset="100%" stopColor="#d4af37" stopOpacity="0"/></radialGradient>
       </defs>
       <ellipse cx="210" cy="100" rx="170" ry="80" fill="url(#glow2)"/>
-      {/* left: maze */}
       <g stroke="url(#gg)" strokeWidth="2" fill="none" opacity=".85">
         <rect x="24" y="52" width="96" height="96" rx="6"/>
         <path d="M24 76h60M48 76v24M48 100h48M96 52v48M72 124h48M72 100v24M24 124h24"/>
       </g>
-      {/* centre: brain / network */}
       <g opacity=".95">
-        <path d="M210 42c-26 0-44 16-44 34 0 8 3 14 8 19-5 6-7 12-7 19 0 20 19 34 43 34s43-14 43-34c0-7-2-13-7-19 5-5 8-11 8-19 0-18-18-34-44-34z"
-              fill="none" stroke="url(#gg)" strokeWidth="2.2"/>
-        <path className="maze-line" d="M210 56v88M186 74c14 6 24 6 38 0M186 126c14-6 24-6 38 0M196 100h28"
-              fill="none" stroke="#d4af37" strokeWidth="1.6" opacity=".9"/>
-        {[[186,74],[224,74],[186,126],[224,126],[210,56],[210,144],[196,100],[224,100]].map((c,i)=>(
-          <circle key={i} cx={c[0]} cy={c[1]} r="3.4" fill="#d4af37"/>
-        ))}
+        <path d="M210 42c-26 0-44 16-44 34 0 8 3 14 8 19-5 6-7 12-7 19 0 20 19 34 43 34s43-14 43-34c0-7-2-13-7-19 5-5 8-11 8-19 0-18-18-34-44-34z" fill="none" stroke="url(#gg)" strokeWidth="2.2"/>
+        <path className="maze-line" d="M210 56v88M186 74c14 6 24 6 38 0M186 126c14-6 24-6 38 0M196 100h28" fill="none" stroke="#d4af37" strokeWidth="1.6" opacity=".9"/>
+        {[[186,74],[224,74],[186,126],[224,126],[210,56],[210,144],[196,100],[224,100]].map((c,i)=>(<circle key={i} cx={c[0]} cy={c[1]} r="3.4" fill="#d4af37"/>))}
       </g>
-      {/* right: game pieces — die, chess pawn, cards */}
       <g stroke="url(#gg)" strokeWidth="2" fill="none" opacity=".85">
         <rect x="300" y="56" width="42" height="42" rx="8" transform="rotate(-12 321 77)"/>
         <g fill="#d4af37" stroke="none" transform="rotate(-12 321 77)">
@@ -246,7 +252,6 @@ function HeroArt(){
         <path d="M300 148c0-10 6-12 6-18a8 8 0 10-16 0c0 6 6 8 6 18z"/>
         <path d="M292 148h20"/>
       </g>
-      {/* connecting dotted route */}
       <path className="maze-line" d="M120 100h46M254 100h40" stroke="#d4af37" strokeWidth="1.5" fill="none" opacity=".8"/>
     </svg>
   );
@@ -265,7 +270,15 @@ function App(){
   useEffect(()=>{const t=setInterval(()=>{ if(window.SYNDICATE_STATUS) setFb({...window.SYNDICATE_STATUS}); },800); return ()=>clearInterval(t);},[]);
   useEffect(()=>{save(state); if(!hydrated.current)return; if(fbApplying.current){fbApplying.current=false;return;} if(window.SyndicateFB)window.SyndicateFB.push(state);},[state]);
   useEffect(()=>{const start=()=>window.SyndicateFB.subscribe((remote)=>{
-      if(remote){ fbApplying.current=true; hydrated.current=true; setState(remote); }
+      if(remote){ fbApplying.current=true; hydrated.current=true;
+        // repair any missing fields so older records never crash the app
+        if(!Array.isArray(remote.players)) remote.players=[];
+        remote.settings={...DEFAULT_SETTINGS,...(remote.settings||{})};
+        remote.players=remote.players.map(p=>({missionTier:0,tokens:5,ip:0,status:"active",...p}));
+        if(!Array.isArray(remote.audit)) remote.audit=[];
+        if(!remote.jury) remote.jury={};
+        if(!Array.isArray(remote.joinRequests)) remote.joinRequests=[];
+        setState(remote); }
       else { hydrated.current=true; setState(s=>{ if(window.SyndicateFB) window.SyndicateFB.push(s); return s; }); }
     });
     if(window.SyndicateFB)start(); else window.addEventListener("syndicate-fb-ready",start,{once:true});},[]);
@@ -279,7 +292,7 @@ function App(){
   const allowed = staff==="admin"?["public","guest","player","admin","gm","scorekeeper","scoreboard","staff"]
                  :staff==="gm"?["public","guest","player","gm","scorekeeper","scoreboard","staff"]
                  :["public","guest","player","staff"];
-  const view = allowed.includes(role)?role:"public";
+  const view = allowed.indexOf(role)>=0?role:"public";
   const dot = fb.state==="live"?"bg-green-400":fb.state==="error"?"bg-red-500":fb.state==="local"?"bg-yellow-400":"bg-gray-500";
   const label = fb.state==="live"?"LIVE · synced across phones":fb.state==="error"?"SYNC PROBLEM — see banner":fb.state==="local"?"Local only (not synced)":"connecting…";
   return (
@@ -302,16 +315,18 @@ function App(){
         </div></div>
       )}
       <div className="max-w-6xl mx-auto px-4 py-6 rise" key={view}>
-        {view==="public" && <PublicPage state={state} setRole={setRole}/>}
-        {view==="guest" && <RSVP state={state} update={update} logAudit={logAudit} rememberCode={rememberCode}/>}
-        {view==="player" && <PlayerPortal state={state} update={update} logAudit={logAudit} savedCode={savedCode} rememberCode={rememberCode}/>}
-        {view==="staff" && <StaffGate onUnlock={(lvl)=>{setStaff(lvl);setRole(lvl==="admin"?"admin":"gm");}}/>}
-        {view==="admin" && <AdminPanel state={state} update={update} logAudit={logAudit}/>}
-        {view==="gm" && <GameMaster state={state} update={update} logAudit={logAudit}/>}
-        {view==="scorekeeper" && <Scorekeeper state={state} update={update} logAudit={logAudit}/>}
-        {view==="scoreboard" && <Scoreboard state={state} update={update}/>}
+        <ErrorBoundary resetKey={view}>
+          {view==="public" && <PublicPage state={state} setRole={setRole}/>}
+          {view==="guest" && <RSVP state={state} update={update} logAudit={logAudit} rememberCode={rememberCode}/>}
+          {view==="player" && <PlayerPortal state={state} update={update} logAudit={logAudit} savedCode={savedCode} rememberCode={rememberCode}/>}
+          {view==="staff" && <StaffGate onUnlock={(lvl)=>{setStaff(lvl);setRole(lvl==="admin"?"admin":"gm");}}/>}
+          {view==="admin" && <AdminPanel state={state} update={update} logAudit={logAudit}/>}
+          {view==="gm" && <GameMaster state={state} update={update} logAudit={logAudit}/>}
+          {view==="scorekeeper" && <Scorekeeper state={state} update={update} logAudit={logAudit}/>}
+          {view==="scoreboard" && <Scoreboard state={state} update={update}/>}
+        </ErrorBoundary>
       </div>
-      <div className="max-w-6xl mx-auto px-4 pb-10 text-center text-[10px] text-[#5f5b52]">{state.settings.eventName} · live-sync via Firebase, offline via browser storage · SAMPLE DATA is clearly labelled — clear it before launch.</div>
+      <div className="max-w-6xl mx-auto px-4 pb-10 text-center text-[10px] text-[#5f5b52]">{state.settings.eventName} · live-sync via Firebase, offline via browser storage</div>
     </div>
   );
 }
@@ -377,15 +392,26 @@ function RulesModal({kind,onClose,onAgree}){
     </div>
   </div>);
 }
+/* ============ RSVP — v8 FIX: `note` state restored ============ */
 function RSVP({state,update,logAudit,rememberCode}){
-  const s=state.settings; const confirmed=state.players.filter(p=>p.rsvp==="yes").length; const full=confirmed>=s.capacity;
+  const s=state.settings;
+  const confirmed=state.players.filter(p=>p.rsvp==="yes").length;
+  const full=confirmed>=s.capacity;
   const blank={fullName:"",displayName:"",phone:"",email:"",house:false,fair:false};
-  const [f,setF]=useState(blank); const [done,setDone]=useState(null); const [err,setErr]=useState(""); const [note,setNote]=useState(""); const [modal,setModal]=useState(null);
+  const [f,setF]=useState(blank);
+  const [done,setDone]=useState(null);
+  const [err,setErr]=useState("");
+  const [note,setNote]=useState("");          // <-- this was missing in v7
+  const [modal,setModal]=useState(null);
   const set=(k,v)=>setF(x=>({...x,[k]:v}));
-  const sendEmail=(name,dn,email,code)=>{if(!email){setNote("No email given — share the entry code manually.");return;}
+  const sendEmail=(name,dn,email,code)=>{
+    if(!email){setNote("No email given — share the entry code manually.");return;}
     const link=location.origin+location.pathname+"?code="+encodeURIComponent(code);
-    if(!window.emailjs||EMAILJS.publicKey.indexOf("YOUR_")===0){setNote("Email service not set up yet — entry code shown below; send manually for now.");return;}
-    emailjs.send(EMAILJS.serviceId,EMAILJS.templateId,{to_email:email,to_name:name,display_name:dn,entry_code:code,portal_link:link,event_name:s.eventName,event_time:s.timeLabel,dress_code:s.dressCode}).then(()=>setNote("✔ Confirmation email sent to "+email)).catch(()=>setNote("Email failed — share the entry code manually."));};
+    if(!window.emailjs||EMAILJS.publicKey.indexOf("YOUR_")===0){setNote("Email service not configured — entry code shown below.");return;}
+    emailjs.send(EMAILJS.serviceId,EMAILJS.templateId,{to_email:email,to_name:name,display_name:dn,entry_code:code,portal_link:link,event_name:s.eventName,event_time:s.timeLabel,dress_code:s.dressCode})
+      .then(()=>setNote("✔ Confirmation email sent to "+email))
+      .catch(()=>setNote("Email failed — share the entry code manually."));
+  };
   const submit=()=>{
     if(!f.fullName.trim()||!f.phone.trim()){setErr("Full name and phone are required.");return;}
     if(!f.email.trim()){setErr("Email is required — your entry code is sent there.");return;}
@@ -393,19 +419,33 @@ function RSVP({state,update,logAudit,rememberCode}){
     const ek=f.email.trim().toLowerCase();
     if(state.players.find(p=>(p.email||"").trim().toLowerCase()===ek)){setErr("This email has already been used to register.");return;}
     if(f.phone.trim()&&state.players.find(p=>p.phone===f.phone.trim())){setErr("This phone number has already registered.");return;}
-    const status=full?"waitlist":"yes"; const id=uid("SYN"); const dn=f.displayName.trim()||f.fullName.trim().split(" ")[0];
-    update(n=>{n.players.push({id,fullName:f.fullName.trim(),displayName:dn,phone:f.phone.trim(),email:f.email.trim(),rsvp:status,checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",missionNo:null,missionTier:0,leaderVote:null,oustVote:false,committee:false,photoConsent:true,notes:"",sample:false});logAudit(n,"RSVP","New registration",f.fullName.trim(),"—",status,"self form");});
+    const status=full?"waitlist":"yes";
+    const id=uid("SYN");
+    const dn=f.displayName.trim()||f.fullName.trim().split(" ")[0];
+    update(n=>{
+      n.players.push({id,fullName:f.fullName.trim(),displayName:dn,phone:f.phone.trim(),email:f.email.trim(),
+        rsvp:status,checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",
+        missionNo:null,missionTier:0,leaderVote:null,oustVote:false,committee:false,photoConsent:true,notes:"",sample:false});
+      logAudit(n,"RSVP","New registration",f.fullName.trim(),"—",status,"self form");
+    });
     sendEmail(f.fullName.trim(),dn,f.email.trim(),id);
-    rememberCode&&rememberCode(id);
+    if(rememberCode) rememberCode(id);
     setDone({id,status}); setF(blank); setErr("");
   };
-  if(done)return (<div className="max-w-lg mx-auto card p-8 glow text-center"><div className="text-5xl mb-2">{done.status==="waitlist"?"⏳":"♦"}</div>
-    <h2 className="gold font-bold text-xl mb-2">{done.status==="yes"?"You're confirmed":"You're on the waitlist"}</h2>
-    <p className="text-sm text-[#c9c3b2] mb-4">{done.status==="yes"?"Welcome to the Syndicate. A confirmation email with your entry code and portal link is on its way.":"We're at capacity. You'll be promoted automatically if a seat opens."}</p>
-    <div className="card p-4 inline-block"><div className="text-[10px] text-[#8a8578]">YOUR ENTRY CODE</div><div className="gold text-2xl font-mono tracking-widest">{done.id}</div><QRlike text={done.id}/></div>
-    {note&&<div className="text-xs text-[#b9b3a3] mt-3">{note}</div>}<div className="mt-5"><Btn tone="ghost" onClick={()=>{setDone(null);setNote("");}}>Register another</Btn></div></div>);
+  if(done) return (
+    <div className="max-w-lg mx-auto card p-8 glow text-center">
+      <div className="text-5xl mb-2">{done.status==="waitlist"?"⏳":"♦"}</div>
+      <h2 className="gold font-bold text-xl mb-2">{done.status==="yes"?"You're confirmed":"You're on the waitlist"}</h2>
+      <p className="text-sm text-[#c9c3b2] mb-4">{done.status==="yes"?"Welcome to the Syndicate. A confirmation email with your entry code and portal link is on its way.":"We're at capacity. You'll be promoted automatically if a seat opens."}</p>
+      <div className="card p-4 inline-block"><div className="text-[10px] text-[#8a8578]">YOUR ENTRY CODE</div>
+        <div className="gold text-2xl font-mono tracking-widest">{done.id}</div><QRlike text={done.id}/></div>
+      {note && <div className="text-xs text-[#b9b3a3] mt-3">{note}</div>}
+      <div className="mt-5"><Btn tone="ghost" onClick={()=>{setDone(null);setNote("");}}>Register another</Btn></div>
+    </div>);
   return (<div className="max-w-lg mx-auto">
-    <div className="card p-4 mb-4 flex items-center justify-between"><div><span className="gold font-bold">RSVP · {s.eventName}</span><div className="text-xs text-[#8a8578]">Capacity {confirmed}/{s.capacity} · {full?"WAITLIST OPEN":"seats available"}</div></div>
+    <div className="card p-4 mb-4 flex items-center justify-between">
+      <div><span className="gold font-bold">RSVP · {s.eventName}</span>
+        <div className="text-xs text-[#8a8578]">Capacity {confirmed}/{s.capacity} · {full?"WAITLIST OPEN":"seats available"}</div></div>
       <div className="w-28 h-2 bg-[#2a2a2e] rounded"><div className="h-2 bg-gold rounded" style={{width:`${Math.min(100,confirmed/s.capacity*100)}%`}}/></div></div>
     <div className="card p-6">
       <Field label="Full name *"><input className={inputCls} value={f.fullName} onChange={e=>set("fullName",e.target.value)}/></Field>
@@ -417,6 +457,7 @@ function RSVP({state,update,logAudit,rememberCode}){
         <label className="flex items-center gap-2"><input type="checkbox" checked={f.fair} onChange={e=>set("fair",e.target.checked)}/> I agree to the <button type="button" className="gold underline" onClick={()=>setModal("fair")}>fair-play rules</button>.</label>
       </div>
       {err&&<div className="text-red-400 text-sm mt-3">{err}</div>}
+      {note&&!err&&<div className="text-xs text-[#b9b3a3] mt-3">{note}</div>}
       <div className="mt-4"><Btn onClick={submit}>Submit RSVP</Btn></div>
       <p className="text-[10px] text-[#5f5b52] mt-3">Your details are visible only to the organiser, never to other guests.</p>
     </div>
@@ -445,7 +486,7 @@ function AdminPanel({state,update,logAudit}){
         <Field label="Time label preview"><input className={inputCls+" opacity-70"} value={s.timeLabel} readOnly/></Field>
         <Field label="Dress code"><input className={inputCls} value={s.dressCode} onChange={e=>set("dressCode",e.target.value)}/></Field>
         <Field label="Capacity"><input type="number" className={inputCls} value={s.capacity} onChange={e=>set("capacity",Number(e.target.value))}/></Field>
-        <Field label="Number of teams"><select className={inputCls} value={s.teamCount} onChange={e=>set("teamCount",Number(e.target.value))}>{[3,4,5,6].map(x=><option key={x} value={x}>{x} teams</option>)}</select></Field>
+        <Field label="Number of Houses"><select className={inputCls} value={s.teamCount} onChange={e=>set("teamCount",Number(e.target.value))}>{[3,4,5,6].map(x=><option key={x} value={x}>{x} Houses</option>)}</select></Field>
         <Field label="Public area (shown to everyone)"><input className={inputCls} value={s.addressPublic} onChange={e=>set("addressPublic",e.target.value)}/></Field>
       </div>
       <Field label="Full address (confirmed Members only)"><input className={inputCls} value={addr} onChange={e=>setAddr(e.target.value)} placeholder="e.g. 12 Admiralty Way, Lekki Phase 1"/></Field>
@@ -457,37 +498,44 @@ function AdminPanel({state,update,logAudit}){
 }
 function PlayerPortal({state,update,logAudit,savedCode,rememberCode}){
   const s=state.settings;
-  const [q,setQ]=useState(savedCode||""); const [code,setCode]=useState(savedCode||""); const [tab,setTab]=useState("me"); const [notFound,setNotFound]=useState(false);
+  const [q,setQ]=useState(savedCode||"");
+  const [code,setCode]=useState(savedCode||"");
+  const [tab,setTab]=useState("me");
+  const [notFound,setNotFound]=useState(false);
   const leaders=useMemo(()=>computeLeaders(state),[state]);
-  const me = code ? state.players.find(x=>x.id.toLowerCase()===code.toLowerCase()||x.displayName.toLowerCase()===code.toLowerCase()) : null;
-  const open=()=>{const c=q.trim(); if(!c)return; const found=state.players.find(x=>x.id.toLowerCase()===c.toLowerCase()||x.displayName.toLowerCase()===c.toLowerCase());
+  const me = code ? state.players.find(x=>String(x.id).toLowerCase()===code.toLowerCase()||String(x.displayName).toLowerCase()===code.toLowerCase()) : null;
+  const open=()=>{const c=q.trim(); if(!c)return;
+    const found=state.players.find(x=>String(x.id).toLowerCase()===c.toLowerCase()||String(x.displayName).toLowerCase()===c.toLowerCase());
     if(found){ setCode(found.id); rememberCode(found.id); setNotFound(false); } else setNotFound(true); };
   const signOut=()=>{ setCode(""); setQ(""); rememberCode(""); setNotFound(false); };
-  if(!code||!me) return (<div className="max-w-md mx-auto card p-6 glow"><h2 className="gold font-bold text-lg mb-1">🎭 Player Portal</h2>
+  if(!code||!me) return (<div className="max-w-md mx-auto card p-6 glow">
+    <h2 className="gold font-bold text-lg mb-1">🎭 Player Portal</h2>
     <p className="text-sm text-[#b9b3a3] mb-3">Enter the entry code from your confirmation email. You'll stay signed in on this phone.</p>
     <input className={inputCls} placeholder="e.g. SYN-xxxx" value={q} onChange={e=>{setQ(e.target.value);setNotFound(false)}} onKeyDown={e=>e.key==="Enter"&&open()}/>
     {notFound&&<div className="text-red-400 text-xs mt-2">No Member found with that code.</div>}
+    {code&&!me&&<div className="text-[11px] text-[#8a8578] mt-2">Your saved code is no longer on the guest list. <button className="gold underline" onClick={signOut}>Clear it</button>.</div>}
     <div className="mt-3"><Btn onClick={open}>Open my portal</Btn></div></div>);
   const team=me.team!=null?TEAMS[me.team]:null;
-  const myLeaderId=me.team!=null?leaders[me.team]:null; const iAmLeader=myLeaderId===me.id;
+  const myLeaderId=me.team!=null?leaders[me.team]:null;
+  const iAmLeader=myLeaderId===me.id;
   const teammates=me.team!=null?state.players.filter(p=>p.team===me.team&&p.rsvp==="yes"):[];
-  const tabs=[["me","My Card"],["team","My Team"],["mission","Mission"],["games","Games"]];
-  const voteLeader=(id)=>update(n=>{const t=n.players.find(p=>p.id===me.id);t.leaderVote=id;logAudit(n,"Player","Leader vote",me.displayName,"","(secret)","team "+me.team);});
-  const toggleOust=()=>update(n=>{const t=n.players.find(p=>p.id===me.id);t.oustVote=!t.oustVote;logAudit(n,"Player","Oust toggle",me.displayName,"","(secret)","team "+me.team);});
-  const requestJoin=(toTeam)=>update(n=>{n.joinRequests=n.joinRequests||[];if(n.joinRequests.find(r=>r.requesterId===me.id&&r.status==="pending"))return;n.joinRequests.push({id:uid("REQ"),requesterId:me.id,fromTeam:me.team,toTeam,status:"pending",swapOutId:null});logAudit(n,"Player","Secret join request",me.displayName,"team "+me.team,"team "+toTeam,"secret");});
-  const decideReq=(reqId,accept,swapOutId)=>update(n=>{const r=n.joinRequests.find(x=>x.id===reqId);if(!r)return;if(!accept){r.status="denied";logAudit(n,"Leader","Denied join request",r.requesterId,"","denied","");return;}if(swapOutId==null)return;r.status="approved";r.swapOutId=swapOutId;const requester=n.players.find(p=>p.id===r.requesterId);const swap=n.players.find(p=>p.id===swapOutId);const oldTeam=requester.team;requester.team=r.toTeam;if(swap)swap.team=oldTeam;n.players.forEach(p=>{if(p.team===r.toTeam||p.team===oldTeam)p.oustVote=false;});logAudit(n,"Leader","Approved join + swap",requester.displayName,swap?swap.displayName:"—","teams swapped","");});
+  const tabs=[["me","My Card"],["team","My House"],["mission","Mission"],["games","Games"]];
+  const voteLeader=(id)=>update(n=>{const t=n.players.find(p=>p.id===me.id);t.leaderVote=id;logAudit(n,"Player","Leader vote",me.displayName,"","(secret)","house "+me.team);});
+  const toggleOust=()=>update(n=>{const t=n.players.find(p=>p.id===me.id);t.oustVote=!t.oustVote;logAudit(n,"Player","Oust toggle",me.displayName,"","(secret)","house "+me.team);});
+  const requestJoin=(toTeam)=>update(n=>{n.joinRequests=n.joinRequests||[];if(n.joinRequests.find(r=>r.requesterId===me.id&&r.status==="pending"))return;n.joinRequests.push({id:uid("REQ"),requesterId:me.id,fromTeam:me.team,toTeam,status:"pending",swapOutId:null});logAudit(n,"Player","Secret join request",me.displayName,"house "+me.team,"house "+toTeam,"secret");});
+  const decideReq=(reqId,accept,swapOutId)=>update(n=>{const r=n.joinRequests.find(x=>x.id===reqId);if(!r)return;if(!accept){r.status="denied";logAudit(n,"Leader","Denied join request",r.requesterId,"","denied","");return;}if(swapOutId==null)return;r.status="approved";r.swapOutId=swapOutId;const requester=n.players.find(p=>p.id===r.requesterId);const swap=n.players.find(p=>p.id===swapOutId);const oldTeam=requester.team;requester.team=r.toTeam;if(swap)swap.team=oldTeam;n.players.forEach(p=>{if(p.team===r.toTeam||p.team===oldTeam)p.oustVote=false;});logAudit(n,"Leader","Approved join + swap",requester.displayName,swap?swap.displayName:"—","houses swapped","");});
   const myPendingReqsAsLeader=(state.joinRequests||[]).filter(r=>r.status==="pending"&&r.toTeam===me.team);
   return (<div className="max-w-md mx-auto space-y-4">
-    <div className="card p-6 text-center glow"><div className="w-16 h-16 rounded-full mx-auto mb-2 flex items-center justify-center text-2xl font-bold" style={{background:team?team.color:"#333",color:"#fff"}}>{me.displayName[0]}</div>
+    <div className="card p-6 text-center glow"><div className="w-16 h-16 rounded-full mx-auto mb-2 flex items-center justify-center text-2xl font-bold" style={{background:team?team.color:"#333",color:"#fff"}}>{String(me.displayName||"?")[0]}</div>
       <h2 className="gold font-bold text-xl">{me.displayName}{iAmLeader&&<span title="Team leader"> 👑</span>}</h2>
-      <div className="text-xs text-[#8a8578]">Member #{me.playerNumber||"—"} · {team?team.name:"Awaiting team"}</div>{me.sample&&<div className="mt-1"><Pill color="#f59e0b">SAMPLE DATA</Pill></div>}
+      <div className="text-xs text-[#8a8578]">Member #{me.playerNumber||"—"} · {team?team.name:"Awaiting House"}</div>{me.sample&&<div className="mt-1"><Pill color="#f59e0b">SAMPLE DATA</Pill></div>}
       <div className="grid grid-cols-3 gap-2 mt-4"><Stat label="Influence" value={me.ip}/><Stat label="Bars" value={me.tokens}/><Stat label="Status" value={STATUS_LABEL[me.status]||me.status} small/></div></div>
     <div className="flex gap-1">{tabs.map(([id,l])=><button key={id} onClick={()=>setTab(id)} className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold ${tab===id?'bg-gold text-black':'bg-[#1c1c20] text-[#c9c3b2]'}`}>{l}</button>)}</div>
     {tab==="me"&&(<div className="space-y-4"><div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">📣 Round in play</h3><p className="text-xs text-[#c9c3b2]"><b>{ROUND_FLOW[s.roundIndex]||"Registration"}</b>. Keep your phone down during explanations.</p></div><div className="card p-4"><QRlike text={me.id}/><div className="text-center text-[10px] text-[#8a8578] mt-1">{me.id}</div></div></div>)}
-    {tab==="team"&&(<div className="space-y-4">{me.team==null?<div className="card p-5 text-sm text-[#b9b3a3]">Teams haven't been drawn yet. Your House appears here live once the Game Master runs the draw. ✨</div>:(<>
+    {tab==="team"&&(<div className="space-y-4">{me.team==null?<div className="card p-5 text-sm text-[#b9b3a3]">Houses haven't been drawn yet. Yours appears here live once the Game Master runs the draw. ✨</div>:(<>
       <div className="card p-5" style={{borderColor:team.ring}}><div className="flex justify-between items-center mb-2"><h3 className="font-bold" style={{color:team.ring}}>{team.name}</h3><Pill>{teammates.length} members</Pill></div>
         {s.showTeammates?<div className="space-y-1">{teammates.map(tm=>(<div key={tm.id} className="flex justify-between text-sm py-1 border-b border-[#2a2a2e]"><span>{tm.displayName} {leaders[me.team]===tm.id&&<span title="Leader">👑</span>} {tm.id===me.id&&<span className="text-[10px] gold">(you)</span>}</span></div>))}</div>:<p className="text-xs text-[#8a8578]">Teammate names are hidden by the organiser for this event.</p>}</div>
-      <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🗳️ Vote your team leader</h3><p className="text-[11px] text-[#8a8578] mb-2">Live tally decides the leader. You can change your vote anytime.</p>
+      <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🗳️ Vote your House leader</h3><p className="text-[11px] text-[#8a8578] mb-2">Live tally decides the leader. You can change your vote anytime.</p>
         <div className="space-y-1">{teammates.map(tm=>(<button key={tm.id} onClick={()=>voteLeader(tm.id)} className={`w-full flex justify-between px-2 py-1.5 rounded text-sm ${me.leaderVote===tm.id?'bg-gold text-black':'bg-[#1c1c20] hover:border-gold border border-transparent'}`}><span>{tm.displayName}{tm.id===me.id&&" (you)"}</span>{me.leaderVote===tm.id&&<span>✓ your vote</span>}</button>))}</div></div>
       {!iAmLeader&&myLeaderId&&(<div className="card p-5 border border-dashed border-[#3a3a40]"><h3 className="text-sm font-semibold" style={{color:'#e0765f'}}>🤫 Secretly oust your leader</h3><p className="text-[11px] text-[#8a8578] mb-2">Your leader can't see who votes. If a majority opts to oust, leadership passes to the next choice.</p><Btn tone={me.oustVote?"danger":"dark"} onClick={toggleOust}>{me.oustVote?"✓ You voted to oust (tap to undo)":"Vote to oust leader"}</Btn></div>)}
       <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">🕵️ Secretly request a House switch</h3><p className="text-[11px] text-[#8a8578] mb-2">Only the target House's leader sees and decides. If accepted, they swap one of their own members into your current House.</p>
@@ -499,11 +547,10 @@ function PlayerPortal({state,update,logAudit,savedCode,rememberCode}){
     <button className="text-xs text-[#5f5b52] underline block mx-auto hover:text-red-400" onClick={signOut}>sign out of this phone</button>
   </div>);
 }
-/* ---------- Secret missions: number claim + SEQUENTIAL unlock ---------- */
 function MissionTab({state,me,update,logAudit}){
   const [num,setNum]=useState(""); const [err,setErr]=useState("");
   const setObj=MISSION_SETS.find(x=>x.n===me.missionNo);
-  const tierDone=me.missionTier||0;  // 0 none, 1 easy done, 2 moderate done, 3 all done
+  const tierDone=me.missionTier||0;
   const claim=()=>{
     const n=Number(num);
     if(!n||n<1||n>MISSION_SETS.length){setErr("Enter a number between 1 and "+MISSION_SETS.length+".");return;}
@@ -523,15 +570,13 @@ function MissionTab({state,me,update,logAudit}){
         <div className="text-right"><Pill color="#f59e0b">CONFIDENTIAL</Pill><div className="text-[10px] text-[#8a8578] mt-1">{tierDone}/3 complete</div></div></div>
       <div className="w-full h-1.5 bg-[#2a2a2e] rounded"><div className="h-1.5 bg-gold rounded transition-all" style={{width:pct+"%"}}/></div>
     </div>
-    {setObj ? TIERS.map((t,i)=>{
-      const unlocked = i<=tierDone;      // current tier visible, earlier ones done
-      const done     = i<tierDone;
-      return <MissionCard key={t.key} tier={t.label} colour={t.colour} reward={t.reward}
-                text={setObj[t.key]} unlocked={unlocked} done={done}
-                prevLabel={i>0?TIERS[i-1].label:null}/>;
-    }) : <p className="text-sm text-[#b9b3a3]">Mission set not found.</p>}
+    {setObj ? TIERS.map((t,i)=>(
+      <MissionCard key={t.key} tier={t.label} colour={t.colour} reward={t.reward}
+        text={setObj[t.key]} unlocked={i<=tierDone} done={i<tierDone}
+        prevLabel={i>0?TIERS[i-1].label:null}/>
+    )) : <p className="text-sm text-[#b9b3a3]">Mission set not found.</p>}
     {tierDone>=3 && <div className="card p-4 text-center glow"><div className="text-2xl">🏅</div><p className="gold text-sm font-bold mt-1">All three missions complete</p><p className="text-[11px] text-[#8a8578]">+35 IP banked. Impressive work.</p></div>}
-    <p className="text-[10px] text-red-400/80 text-center">Yours alone. Report each completion privately to the marshal to unlock the next — never show this screen to another Member.</p>
+    <p className="text-[10px] text-red-400/80 text-center">Yours alone. Report each completion privately to the marshal to unlock the next.</p>
   </div>);
 }
 function MissionCard({tier,colour,text,reward,unlocked,done,prevLabel}){
@@ -593,25 +638,25 @@ function GMScore({state,update,logAudit,roundLabel}){
   const [sel,setSel]=useState(null); const [reason,setReason]=useState("");
   const p=state.players.find(x=>x.id===sel);
   const applyOne=(delta,kind)=>{if(!p)return;update(n=>{const t=n.players.find(x=>x.id===sel);if(kind==="ip"){let nv=Math.max(0,t.ip+delta);logAudit(n,"GM",(delta>0?"+":"")+delta+" IP",t.displayName,t.ip,nv,reason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+delta);logAudit(n,"GM",(delta>0?"+":"")+delta+" Bars",t.displayName,t.tokens,nv,reason||roundLabel);t.tokens=nv;}});setReason("");};
-  const undo=()=>update(n=>{const last=n.audit[0];if(!last||!last.tgt||last.tgt==="—")return;const t=n.players.find(x=>x.displayName===last.tgt);if(t&&last.act.includes("IP"))t.ip=Number(last.prev)||t.ip;else if(t&&last.act.includes("Bars"))t.tokens=Number(last.prev)||t.tokens;n.audit.unshift({t:Date.now(),op:"GM",act:"UNDO",tgt:last.tgt,prev:last.next,next:last.prev,reason:"undo"});});
+  const undo=()=>update(n=>{const last=n.audit[0];if(!last||!last.tgt||last.tgt==="—")return;const t=n.players.find(x=>x.displayName===last.tgt);if(t&&last.act.indexOf("IP")>=0)t.ip=Number(last.prev)||t.ip;else if(t&&last.act.indexOf("Bars")>=0)t.tokens=Number(last.prev)||t.tokens;n.audit.unshift({t:Date.now(),op:"GM",act:"UNDO",tgt:last.tgt,prev:last.next,next:last.prev,reason:"undo"});});
   const [amts,setAmts]=useState({}); const [manyReason,setManyReason]=useState(""); const [manyKind,setManyKind]=useState("ip"); const [q,setQ]=useState("");
   const manyCount=Object.values(amts).filter(v=>Number(v)).length;
-  const applyMany=()=>{update(n=>{Object.entries(amts).forEach(([id,val])=>{const d=Number(val);if(!d)return;const t=n.players.find(x=>x.id===id);if(!t)return;if(manyKind==="ip"){let nv=Math.max(0,t.ip+d);logAudit(n,"GM",(d>0?"+":"")+d+" IP",t.displayName,t.ip,nv,manyReason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+d);logAudit(n,"GM",(d>0?"+":"")+d+" Bars",t.displayName,t.tokens,nv,manyReason||roundLabel);t.tokens=nv;}});});setAmts({});setManyReason("");};
-  const manyList=[...state.players].sort((a,b)=>a.displayName.localeCompare(b.displayName)).filter(pl=>(pl.displayName+pl.id).toLowerCase().includes(q.toLowerCase()));
+  const applyMany=()=>{update(n=>{Object.keys(amts).forEach(id=>{const d=Number(amts[id]);if(!d)return;const t=n.players.find(x=>x.id===id);if(!t)return;if(manyKind==="ip"){let nv=Math.max(0,t.ip+d);logAudit(n,"GM",(d>0?"+":"")+d+" IP",t.displayName,t.ip,nv,manyReason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+d);logAudit(n,"GM",(d>0?"+":"")+d+" Bars",t.displayName,t.tokens,nv,manyReason||roundLabel);t.tokens=nv;}});});setAmts({});setManyReason("");};
+  const manyList=[...state.players].sort((a,b)=>String(a.displayName).localeCompare(String(b.displayName))).filter(pl=>(pl.displayName+pl.id).toLowerCase().indexOf(q.toLowerCase())>=0);
   const [teamSel,setTeamSel]=useState(0); const [teamPts,setTeamPts]=useState(5); const [teamKind,setTeamKind]=useState("ip"); const [teamReason,setTeamReason]=useState("");
   const teamMembers=state.players.filter(x=>x.team===Number(teamSel));
-  const applyTeam=()=>{const d=Number(teamPts);if(!d)return;update(n=>{n.players.filter(x=>x.team===Number(teamSel)).forEach(t=>{if(teamKind==="ip"){let nv=Math.max(0,t.ip+d);logAudit(n,"GM",(d>0?"+":"")+d+" IP (team)",t.displayName,t.ip,nv,teamReason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+d);logAudit(n,"GM",(d>0?"+":"")+d+" Bars (team)",t.displayName,t.tokens,nv,teamReason||roundLabel);t.tokens=nv;}});});};
+  const applyTeam=()=>{const d=Number(teamPts);if(!d)return;update(n=>{n.players.filter(x=>x.team===Number(teamSel)).forEach(t=>{if(teamKind==="ip"){let nv=Math.max(0,t.ip+d);logAudit(n,"GM",(d>0?"+":"")+d+" IP (house)",t.displayName,t.ip,nv,teamReason||roundLabel);t.ip=nv;}else{let nv=Math.max(0,t.tokens+d);logAudit(n,"GM",(d>0?"+":"")+d+" Bars (house)",t.displayName,t.tokens,nv,teamReason||roundLabel);t.tokens=nv;}});});};
   return (<div>
     <div className="flex gap-1 mb-3">{[["one","One player"],["many","Several at once"],["team","Whole House"]].map(([id,l])=><button key={id} onClick={()=>setMode(id)} className={`flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold ${mode===id?'bg-gold text-black':'bg-[#1c1c20] text-[#c9c3b2]'}`}>{l}</button>)}</div>
     {mode==="one"&&(<div>
-      <select className={inputCls+" mb-3"} value={sel||""} onChange={e=>setSel(e.target.value||null)}><option value="">— pick a player —</option>{[...state.players].sort((a,b)=>a.displayName.localeCompare(b.displayName)).map(pl=><option key={pl.id} value={pl.id}>{pl.displayName} ({pl.ip} IP)</option>)}</select>
+      <select className={inputCls+" mb-3"} value={sel||""} onChange={e=>setSel(e.target.value||null)}><option value="">— pick a player —</option>{[...state.players].sort((a,b)=>String(a.displayName).localeCompare(String(b.displayName))).map(pl=><option key={pl.id} value={pl.id}>{pl.displayName} ({pl.ip} IP)</option>)}</select>
       {p?(<div>
         <div className="flex items-center justify-between mb-3"><span className="gold font-bold">{p.displayName}</span><div className="flex gap-2"><Pill>IP {p.ip}</Pill><Pill color="#f59e0b">Bars {p.tokens}</Pill></div></div>
         <input className={inputCls+" mb-3"} value={reason} onChange={e=>setReason(e.target.value)} placeholder={"Reason (optional) — defaults to: "+roundLabel}/>
         <div className="text-[10px] text-[#8a8578] mb-1">Influence points</div>
-        <div className="grid grid-cols-4 gap-2 mb-3">{[+5,+10,+20,-5].map(v=><Btn key={v} tone={v>0?"gold":"danger"} onClick={()=>applyOne(v,"ip")}>{v>0?"+":""}{v}</Btn>)}</div>
+        <div className="grid grid-cols-4 gap-2 mb-3">{[5,10,20,-5].map(v=><Btn key={v} tone={v>0?"gold":"danger"} onClick={()=>applyOne(v,"ip")}>{v>0?"+":""}{v}</Btn>)}</div>
         <div className="text-[10px] text-[#8a8578] mb-1">Bars (tokens)</div>
-        <div className="grid grid-cols-4 gap-2 mb-3">{[+1,+3,-1,-3].map(v=><Btn key={v} tone="ghost" onClick={()=>applyOne(v,"tok")}>{v>0?"+":""}{v}</Btn>)}</div>
+        <div className="grid grid-cols-4 gap-2 mb-3">{[1,3,-1,-3].map(v=><Btn key={v} tone="ghost" onClick={()=>applyOne(v,"tok")}>{v>0?"+":""}{v}</Btn>)}</div>
         <Btn tone="dark" onClick={undo}>↩ Undo last action</Btn>
       </div>):<p className="text-sm text-[#8a8578]">Pick a player to give or take points.</p>}
     </div>)}
@@ -620,7 +665,7 @@ function GMScore({state,update,logAudit,roundLabel}){
       <div className="flex gap-2 mb-2"><input className={inputCls+" flex-1"} placeholder="Search players…" value={q} onChange={e=>setQ(e.target.value)}/><select className={inputCls+" w-28"} value={manyKind} onChange={e=>setManyKind(e.target.value)}><option value="ip">Points</option><option value="tok">Bars</option></select></div>
       <div className="card p-2 max-h-64 overflow-auto mb-2">{manyList.map(pl=>(<div key={pl.id} className="flex items-center justify-between gap-2 py-1 border-b border-[#2a2a2e]"><span className="text-sm">{pl.displayName} <span className="text-[10px] text-[#8a8578]">{pl.team!=null?TEAMS[pl.team].name.replace("House ",""):"—"} · {pl.ip} IP</span></span><input type="number" className="w-20 rounded px-2 py-1 bg-[#f4efe2] text-black text-sm" placeholder="0" value={amts[pl.id]||""} onChange={e=>setAmts(a=>({...a,[pl.id]:e.target.value}))}/></div>))}</div>
       <input className={inputCls+" mb-2"} value={manyReason} onChange={e=>setManyReason(e.target.value)} placeholder={"Reason (optional) — defaults to: "+roundLabel}/>
-      <div className="flex gap-2"><Btn onClick={applyMany} disabled={manyCount===0}>Submit {manyCount>0?`(${manyCount})`:""} together</Btn><Btn tone="dark" onClick={()=>setAmts({})}>Clear</Btn></div>
+      <div className="flex gap-2"><Btn onClick={applyMany} disabled={manyCount===0}>Submit {manyCount>0?"("+manyCount+")":""} together</Btn><Btn tone="dark" onClick={()=>setAmts({})}>Clear</Btn></div>
     </div>)}
     {mode==="team"&&(<div>
       <p className="text-[11px] text-[#8a8578] mb-2">Give or take the same amount for every member of a House at once.</p>
@@ -630,7 +675,7 @@ function GMScore({state,update,logAudit,roundLabel}){
       </div>
       <Field label="Amount (use a negative number to deduct)"><input type="number" className={inputCls} value={teamPts} onChange={e=>setTeamPts(e.target.value)}/></Field>
       <input className={inputCls+" mb-2"} value={teamReason} onChange={e=>setTeamReason(e.target.value)} placeholder={"Reason (optional) — defaults to: "+roundLabel}/>
-      <div className="text-[11px] text-[#8a8578] mb-2">Applies to {teamMembers.length} member(s): {teamMembers.map(m=>m.displayName).join(", ")||"—"}</div>
+      <div className="text-[11px] text-[#8a8578] mb-2">Applies to {teamMembers.length} member(s)</div>
       <Btn onClick={applyTeam} disabled={!teamMembers.length}>Apply to whole House</Btn>
     </div>)}
   </div>);
@@ -638,7 +683,7 @@ function GMScore({state,update,logAudit,roundLabel}){
 function BigTimer({state,update}){
   const [min,setMin]=useState(5); const [now,setNow]=useState(Date.now());
   useEffect(()=>{const t=setInterval(()=>setNow(Date.now()),250);return()=>clearInterval(t)},[]);
-  const {timerEnd,timerLeft}=state.settings;
+  const timerEnd=state.settings.timerEnd, timerLeft=state.settings.timerLeft;
   const running = !!timerEnd;
   const left = running ? Math.max(0,timerEnd-now) : (timerLeft||0);
   const mm=Math.floor(left/6e4), ss=Math.floor(left/1e3)%60;
@@ -648,7 +693,7 @@ function BigTimer({state,update}){
   const stop=()=>update(n=>{n.settings.timerEnd=null;n.settings.timerLeft=null;});
   const paused = !running && (timerLeft||0)>0;
   return (<div className="text-center">
-    <div className={`text-6xl font-black font-mono ${left<=10000&&(running)?'text-red-400':'gold'}`}>{String(mm).padStart(2,"0")}:{String(ss).padStart(2,"0")}</div>
+    <div className={`text-6xl font-black font-mono ${left<=10000&&running?'text-red-400':'gold'}`}>{String(mm).padStart(2,"0")}:{String(ss).padStart(2,"0")}</div>
     <div className="text-[10px] text-[#8a8578] mb-3">{running?"running":paused?"paused — press resume to continue":"stopped"}</div>
     <div className="flex justify-center items-center gap-2 flex-wrap">
       {!running && !paused && (<><input type="number" className={inputCls+" w-20"} value={min} onChange={e=>setMin(Number(e.target.value))}/>{[3,5,10].map(x=><Btn key={x} tone="ghost" onClick={()=>start(x)}>{x}m</Btn>)}<Btn onClick={()=>start()}>▶ Start</Btn></>)}
@@ -670,21 +715,20 @@ function GMSetup({state,update,logAudit}){
 }
 function GMTeams({state,update,logAudit}){
   const tc=state.settings.teamCount||4; const leaders=useMemo(()=>computeLeaders(state),[state]);
-  const drawLive=()=>update(n=>{const pool=n.players.filter(p=>p.rsvp==="yes");for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}pool.forEach((p,idx)=>{const t=n.players.find(x=>x.id===p.id);t.team=idx%tc;t.playerNumber=idx+1;t.leaderVote=null;t.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","LIVE House draw",tc+" Houses","—","random","game-day draw");});
+  const drawLive=()=>update(n=>{const pool=n.players.filter(p=>p.rsvp==="yes");for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const tmp=pool[i];pool[i]=pool[j];pool[j]=tmp;}pool.forEach((p,idx)=>{const t=n.players.find(x=>x.id===p.id);t.team=idx%tc;t.playerNumber=idx+1;t.leaderVote=null;t.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","LIVE House draw",tc+" Houses","—","random","game-day draw");});
   const clear=()=>update(n=>{n.players.forEach(p=>{p.team=null;p.playerNumber=null;p.leaderVote=null;p.oustVote=false;});n.joinRequests=[];n.teamLeaders={};logAudit(n,"GM","Cleared Houses","all","—","—","");});
   const move=(id,t)=>update(n=>{const pl=n.players.find(x=>x.id===id);const prev=pl.team!=null?TEAMS[pl.team].name:"—";pl.team=t===""?null:Number(t);logAudit(n,"GM","Manual move",pl.displayName,prev,t===""?"—":TEAMS[Number(t)].name,"override");});
   const teams=Array.from({length:tc},(_,i)=>({...TEAMS[i],idx:i,members:state.players.filter(p=>p.team===i&&p.rsvp==="yes")}));
-  return (<div><div className="flex gap-2 mb-4 flex-wrap"><Btn onClick={drawLive}>🎲 Draw {tc} Houses LIVE</Btn><Btn tone="dark" onClick={clear}>Clear Houses</Btn><span className="text-[11px] text-[#8a8578] self-center">Randomly assigns confirmed players; reflects instantly on every portal + scoreboard.</span></div>
+  return (<div><div className="flex gap-2 mb-4 flex-wrap"><Btn onClick={drawLive}>🎲 Draw {tc} Houses LIVE</Btn><Btn tone="dark" onClick={clear}>Clear Houses</Btn></div>
     <div className="grid md:grid-cols-3 gap-3">{teams.map(h=>(<div key={h.idx} className="card p-3" style={{borderColor:h.ring}}><div className="font-bold text-sm mb-2" style={{color:h.ring}}>{h.name} <span className="text-[#8a8578]">({h.members.length})</span></div>{h.members.map(m=>(<div key={m.id} className="flex items-center justify-between text-xs py-1"><span>{m.displayName}{leaders[h.idx]===m.id&&" 👑"}</span><select className="text-[10px] rounded bg-[#f4efe2] text-black" value={m.team} onChange={e=>move(m.id,e.target.value)}>{teams.map(hh=><option key={hh.idx} value={hh.idx}>{hh.name.replace("House ","")}</option>)}<option value="">—</option></select></div>))}</div>))}</div>
     <p className="text-[10px] text-[#8a8578] mt-3">👑 = live-voted leader.</p></div>);
 }
-/* ---------- GM mission verification: unlock one tier at a time ---------- */
 function GMMissions({state,update,logAudit}){
   const claimed=state.players.filter(p=>p.missionNo).sort((a,b)=>a.missionNo-b.missionNo);
-  const taken=new Set(claimed.map(p=>p.missionNo));
+  const taken={}; claimed.forEach(p=>taken[p.missionNo]=true);
   const verifyNext=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const cur=t.missionTier||0;if(cur>=3)return;
     const tier=TIERS[cur]; const nv=Math.max(0,t.ip+tier.reward);
-    logAudit(n,"GM","Mission "+tier.label+" verified +"+tier.reward,t.displayName,t.ip,nv,"№"+t.missionNo);
+    logAudit(n,"GM","Mission "+tier.label+" verified +"+tier.reward,t.displayName,t.ip,nv,"No."+t.missionNo);
     t.ip=nv; t.missionTier=cur+1;});
   const stepBack=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const cur=t.missionTier||0;if(cur<=0)return;
     const tier=TIERS[cur-1]; const nv=Math.max(0,t.ip-tier.reward);
@@ -692,10 +736,10 @@ function GMMissions({state,update,logAudit}){
   const clearOne=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);logAudit(n,"GM","Cleared slip number",t.displayName,t.missionNo,"—","marshal fix");t.missionNo=null;t.missionTier=0;});
   return (<div className="space-y-3">
     <div className="card p-4"><h3 className="gold font-semibold text-sm mb-1">Numbered slips (1–{MISSION_SETS.length})</h3>
-      <p className="text-xs text-[#8a8578] mb-3">Guests draw a paper number and enter it in their portal. Each number unlocks a unique set. Missions reveal <b className="gold">one tier at a time</b> — verify Easy to unlock Moderate, then Hard.</p>
-      <div className="flex flex-wrap gap-1">{MISSION_SETS.map(m=><span key={m.n} className="px-2 py-0.5 rounded text-[11px] font-semibold" style={{background:taken.has(m.n)?"#d4af37":"#1c1c20",color:taken.has(m.n)?"#000":"#5f5b52"}}>{m.n}</span>)}</div>
+      <p className="text-xs text-[#8a8578] mb-3">Guests draw a paper number and enter it in their portal. Missions reveal <b className="gold">one tier at a time</b> — verify Easy to unlock Moderate, then Hard.</p>
+      <div className="flex flex-wrap gap-1">{MISSION_SETS.map(m=><span key={m.n} className="px-2 py-0.5 rounded text-[11px] font-semibold" style={{background:taken[m.n]?"#d4af37":"#1c1c20",color:taken[m.n]?"#000":"#5f5b52"}}>{m.n}</span>)}</div>
       <p className="text-[10px] text-[#5f5b52] mt-2">Gold = claimed ({claimed.length}/{MISSION_SETS.length})</p></div>
-    <div className="card p-4 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-1">Member</th><th className="p-1">№</th><th className="text-left p-1">Progress</th><th className="p-1">Next to verify</th><th className="p-1"></th></tr></thead>
+    <div className="card p-4 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-1">Member</th><th className="p-1">No.</th><th className="text-left p-1">Progress</th><th className="p-1">Next to verify</th><th className="p-1"></th></tr></thead>
       <tbody>{claimed.length===0?<tr><td colSpan="5" className="p-3 text-center text-[#8a8578] text-xs">No numbers claimed yet.</td></tr>:claimed.map(p=>{
         const cur=p.missionTier||0; const nextTier=cur<3?TIERS[cur]:null; const setObj=MISSION_SETS.find(x=>x.n===p.missionNo);
         return (<tr key={p.id} className="border-t border-[#2a2a2e] align-top">
@@ -711,38 +755,39 @@ function GMMissions({state,update,logAudit}){
 function GMJury({state,update,logAudit}){
   const finalists=state.players.filter(p=>p.status==="finalist"||p.status==="chair");
   const cast=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);const cur=n.jury[id]||0;n.jury[id]=cur+1;logAudit(n,"GM","Jury vote",t.displayName,cur,cur+1,"jury");});
-  const applyBonus=()=>update(n=>{const fs=n.players.filter(p=>p.status==="finalist"||p.status==="chair");const sorted=[...fs].sort((a,b)=>b.ip-a.ip);const margin=sorted.length>1?Math.max(0,sorted[0].ip-sorted[1].ip):15;fs.forEach(p=>{const votes=n.jury[p.id]||0;let bonus=Math.min(votes*3,CAPS["Jury Bonus"],margin);logAudit(n,"GM","Jury bonus (capped)",p.displayName,p.ip,p.ip+bonus,"votes "+votes);p.ip+=bonus;});});
+  const applyBonus=()=>update(n=>{const fs=n.players.filter(p=>p.status==="finalist"||p.status==="chair");const sorted=[...fs].sort((a,b)=>b.ip-a.ip);const margin=sorted.length>1?Math.max(0,sorted[0].ip-sorted[1].ip):15;fs.forEach(p=>{const votes=n.jury[p.id]||0;const bonus=Math.min(votes*3,CAPS["Jury Bonus"],margin);logAudit(n,"GM","Jury bonus (capped)",p.displayName,p.ip,p.ip+bonus,"votes "+votes);p.ip+=bonus;});});
   const setStatus=(id,st)=>update(n=>{const t=n.players.find(x=>x.id===id);logAudit(n,"GM","Status → "+STATUS_LABEL[st],t.displayName,STATUS_LABEL[t.status],STATUS_LABEL[st],"stage");t.status=st;});
-  return (<div className="space-y-4"><div className="card p-5"><h3 className="gold font-semibold mb-1">Stage status (set finalists)</h3><p className="text-xs text-[#8a8578] mb-2">Mark your final players, then run the jury.</p>
+  return (<div className="space-y-4"><div className="card p-5"><h3 className="gold font-semibold mb-1">Stage status (set finalists)</h3>
     <div className="max-h-48 overflow-auto space-y-1">{[...state.players].sort((a,b)=>b.ip-a.ip).slice(0,12).map(p=>(<div key={p.id} className="flex items-center justify-between text-sm"><span>{p.displayName} <span className="text-[#8a8578] text-xs">· {p.ip} IP · {STATUS_LABEL[p.status]}</span></span><div className="flex gap-1"><Btn tone="dark" onClick={()=>setStatus(p.id,"finalist")}>Finalist</Btn><Btn tone="danger" onClick={()=>setStatus(p.id,"frozen")}>Freeze</Btn><Btn onClick={()=>setStatus(p.id,"chair")}>👑</Btn></div></div>))}</div></div>
     <div className="card p-5"><h3 className="gold font-semibold mb-1">Jury / Audience Vote</h3><p className="text-xs text-[#8a8578] mb-3">Bonus capped, cannot exceed the leader's earned IP margin.</p>{finalists.length===0?<p className="text-sm text-[#8a8578]">No finalists yet.</p>:(<div className="space-y-2">{finalists.map(p=>(<div key={p.id} className="flex items-center justify-between card p-2"><span>{p.displayName} <span className="text-xs text-[#8a8578]">· {p.ip} IP</span></span><div className="flex items-center gap-2"><Pill>{state.jury[p.id]||0} votes</Pill><Btn tone="dark" onClick={()=>cast(p.id)}>+ vote</Btn></div></div>))}<Btn onClick={applyBonus}>Apply capped jury bonus</Btn></div>)}</div></div>);
 }
-function AuditView({state}){return (<div className="card p-4"><h3 className="gold font-semibold text-sm mb-2">Audit log ({state.audit.length})</h3><div className="max-h-[500px] overflow-auto text-xs"><table className="w-full"><thead><tr className="text-[#8a8578]"><th className="text-left p-1">Time</th><th className="text-left p-1">Op</th><th className="text-left p-1">Action</th><th className="text-left p-1">Target</th><th className="p-1">From→To</th><th className="text-left p-1">Reason</th></tr></thead><tbody>{state.audit.map((a,i)=>(<tr key={i} className="border-t border-[#2a2a2e]"><td className="p-1 text-[#8a8578]">{new Date(a.t).toLocaleTimeString()}</td><td className="p-1">{a.op}</td><td className="p-1">{a.act}</td><td className="p-1">{a.tgt}</td><td className="p-1 text-center">{a.prev}→{a.next}</td><td className="p-1 text-[#8a8578]">{a.reason}</td></tr>))}</tbody></table></div></div>);}
+function AuditView({state}){return (<div className="card p-4"><h3 className="gold font-semibold text-sm mb-2">Audit log ({state.audit.length})</h3><div className="max-h-[500px] overflow-auto text-xs"><table className="w-full"><thead><tr className="text-[#8a8578]"><th className="text-left p-1">Time</th><th className="text-left p-1">Op</th><th className="text-left p-1">Action</th><th className="text-left p-1">Target</th><th className="p-1">From→To</th></tr></thead><tbody>{state.audit.map((a,i)=>(<tr key={i} className="border-t border-[#2a2a2e]"><td className="p-1 text-[#8a8578]">{new Date(a.t).toLocaleTimeString()}</td><td className="p-1">{a.op}</td><td className="p-1">{a.act}</td><td className="p-1">{a.tgt}</td><td className="p-1 text-center">{a.prev}→{a.next}</td></tr>))}</tbody></table></div></div>);}
 function DataTab({state,update,logAudit}){
   const fileRef=useRef();
-  const exportCSV=()=>{const cols=["id","fullName","displayName","phone","email","rsvp","checkedIn","team","playerNumber","ip","tokens","status","missionNo","missionTier","sample"];const rows=[cols.join(",")].concat(state.players.map(p=>cols.map(c=>{let v=p[c];if(c==="team")v=p.team!=null?TEAMS[p.team].name:"";return `"${String(v??"").replace(/"/g,'""')}"`;}).join(",")));const blob=new Blob([rows.join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="syndicate_guests.csv";a.click();};
-  const importCSV=(e)=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const lines=r.result.split(/\r?\n/).filter(Boolean);const head=lines[0].split(",").map(h=>h.replace(/"/g,"").trim());const idx=k=>head.indexOf(k);update(n=>{lines.slice(1).forEach(line=>{const cells=line.match(/("([^"]|"")*"|[^,]*)/g).filter((_,i)=>i%2===0).map(c=>c.replace(/^"|"$/g,"").replace(/""/g,'"'));const name=cells[idx("fullName")]||cells[idx("displayName")];if(!name)return;const email=cells[idx("email")]||"";if(email&&n.players.find(p=>(p.email||"").toLowerCase()===email.toLowerCase()))return;n.players.push({id:uid("IMP"),fullName:name,displayName:cells[idx("displayName")]||name.split(" ")[0],phone:cells[idx("phone")]||"",email,rsvp:cells[idx("rsvp")]||"yes",checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",missionNo:null,missionTier:0,leaderVote:null,oustVote:false,committee:false,photoConsent:true,notes:"imported",sample:false});});logAudit(n,"GM","CSV import",f.name,"—",(lines.length-1)+" rows","");});};r.readAsText(f);};
-  const goLive=()=>{if(confirm("Clear the sample roster and start a clean, empty guest list for launch?\n\nYour event settings (date, capacity, Houses) are kept. This cannot be undone."))
+  const exportCSV=()=>{const cols=["id","fullName","displayName","phone","email","rsvp","checkedIn","team","playerNumber","ip","tokens","status","missionNo","missionTier"];const rows=[cols.join(",")].concat(state.players.map(p=>cols.map(c=>{let v=p[c];if(c==="team")v=p.team!=null?TEAMS[p.team].name:"";return '"'+String(v==null?"":v).replace(/"/g,'""')+'"';}).join(",")));const blob=new Blob([rows.join("\n")],{type:"text/csv"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="syndicate_guests.csv";a.click();};
+  const importCSV=(e)=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{const lines=String(r.result).split(/\r?\n/).filter(Boolean);const head=lines[0].split(",").map(h=>h.replace(/"/g,"").trim());const idx=k=>head.indexOf(k);update(n=>{lines.slice(1).forEach(line=>{const cells=line.split(",").map(c=>c.replace(/^"|"$/g,"").replace(/""/g,'"'));const name=cells[idx("fullName")]||cells[idx("displayName")];if(!name)return;const email=cells[idx("email")]||"";if(email&&n.players.find(p=>(p.email||"").toLowerCase()===email.toLowerCase()))return;n.players.push({id:uid("IMP"),fullName:name,displayName:cells[idx("displayName")]||name.split(" ")[0],phone:cells[idx("phone")]||"",email,rsvp:cells[idx("rsvp")]||"yes",checkedIn:false,team:null,playerNumber:null,ip:0,tokens:5,status:"active",missionNo:null,missionTier:0,leaderVote:null,oustVote:false,committee:false,photoConsent:true,notes:"imported",sample:false});});logAudit(n,"GM","CSV import",f.name,"—",(lines.length-1)+" rows","");});};r.readAsText(f);};
+  const goLive=()=>{if(confirm("Clear the sample roster and start a clean, empty guest list?\n\nYour event settings are kept. This cannot be undone."))
     {update(n=>{n.players=[];n.teamLeaders={};n.joinRequests=[];n.jury={};logAudit(n,"Admin","Cleared roster for launch","—","","0 players","go-live");});}};
+  const restoreSamples=()=>{if(confirm("Add the 12 demo players back (for testing)?")){update(n=>{n.players=n.players.concat(SAMPLE_PLAYERS.filter(sp=>!n.players.find(p=>p.id===sp.id)));logAudit(n,"Admin","Restored samples","—","","12 demo players","testing");});}};
   const reset=()=>{if(confirm("DANGER: wipe everything and reload SAMPLE DATA?")){localStorage.removeItem(KEY);if(window.SyndicateFB)window.SyndicateFB.push(null);location.reload();}};
   return (<div className="grid md:grid-cols-2 gap-4">
-    <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Backup & launch</h3>
+    <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Backup &amp; launch</h3>
       <div className="flex flex-wrap gap-2"><Btn onClick={exportCSV}>⬇ Export CSV</Btn><Btn onClick={goLive}>🚀 Go live (clear roster)</Btn><Btn tone="ghost" onClick={()=>fileRef.current.click()}>⬆ Import CSV</Btn><input type="file" ref={fileRef} accept=".csv" className="hidden" onChange={importCSV}/></div>
-      <p className="text-[10px] text-[#8a8578] mt-3"><b>Go live</b> empties the guest list but keeps your settings — use it once, just before sending invites. Export CSV regularly as your offline backup.</p></div>
+      <div className="mt-2"><Btn tone="dark" onClick={restoreSamples}>↩ Put demo players back</Btn></div>
+      <p className="text-[10px] text-[#8a8578] mt-3"><b>Go live</b> empties the guest list but keeps your settings. Export CSV regularly as your offline backup.</p></div>
     <div className="card p-5"><h3 className="gold font-semibold text-sm mb-2">Danger zone</h3><Btn tone="danger" onClick={reset}>♻ Reset everything to SAMPLE</Btn>
-      <p className="text-[10px] text-[#8a8578] mt-3">Never press this once real guests have registered — it wipes the roster and restores demo players.</p></div>
+      <p className="text-[10px] text-[#8a8578] mt-3">Never press this once real guests have registered.</p></div>
   </div>);
 }
 function Scorekeeper({state,update,logAudit}){
   const s=state.settings; const [q,setQ]=useState(""); const [f,setF]=useState("all"); const [sort,setSort]=useState("ip");
   const checkIn=(id)=>update(n=>{const t=n.players.find(x=>x.id===id);t.checkedIn=!t.checkedIn;t.arrivalTime=t.checkedIn?nowStr():null;logAudit(n,"Scorekeeper",t.checkedIn?"Checked in":"Undo check-in",t.displayName,"",t.checkedIn?nowStr():"","arrival");});
-  let list=state.players.filter(p=>{const srch=(p.displayName+p.fullName+p.id).toLowerCase().includes(q.toLowerCase());const ff=f==="all"||(f==="confirmed"&&p.rsvp==="yes")||(f==="checkedin"&&p.checkedIn)||(f==="waitlist"&&p.rsvp==="waitlist");return srch&&ff;});
-  list.sort((a,b)=>sort==="ip"?b.ip-a.ip:sort==="name"?a.displayName.localeCompare(b.displayName):(a.playerNumber||999)-(b.playerNumber||999));
+  let list=state.players.filter(p=>{const srch=(p.displayName+p.fullName+p.id).toLowerCase().indexOf(q.toLowerCase())>=0;const ff=f==="all"||(f==="confirmed"&&p.rsvp==="yes")||(f==="checkedin"&&p.checkedIn)||(f==="waitlist"&&p.rsvp==="waitlist");return srch&&ff;});
+  list.sort((a,b)=>sort==="ip"?b.ip-a.ip:sort==="name"?String(a.displayName).localeCompare(String(b.displayName)):(a.playerNumber||999)-(b.playerNumber||999));
   const confirmed=state.players.filter(p=>p.rsvp==="yes").length; const inHouse=state.players.filter(p=>p.checkedIn).length;
-  return (<div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"><KPI label="Confirmed" value={confirmed}/><KPI label="Checked in" value={inHouse}/><KPI label="Capacity" value={`${confirmed}/${s.capacity}`}/><KPI label="Waitlist" value={state.players.filter(p=>p.rsvp==="waitlist").length}/></div>
+  return (<div><div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"><KPI label="Confirmed" value={confirmed}/><KPI label="Checked in" value={inHouse}/><KPI label="Capacity" value={confirmed+"/"+s.capacity}/><KPI label="Waitlist" value={state.players.filter(p=>p.rsvp==="waitlist").length}/></div>
     <div className="card p-3 mb-3 flex flex-wrap gap-2 items-center"><input className={inputCls+" flex-1 min-w-[160px]"} placeholder="Search name or ID…" value={q} onChange={e=>setQ(e.target.value)}/><select className={inputCls+" w-auto"} value={f} onChange={e=>setF(e.target.value)}><option value="all">All</option><option value="confirmed">Confirmed</option><option value="checkedin">Checked in</option><option value="waitlist">Waitlist</option></select><select className={inputCls+" w-auto"} value={sort} onChange={e=>setSort(e.target.value)}><option value="ip">Sort: IP</option><option value="name">Sort: Name</option><option value="num">Sort: Player #</option></select></div>
-    <div className="card p-2 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-2">Member</th><th className="p-2">House</th><th className="p-2">№</th><th className="p-2">Missions</th><th className="p-2">IP</th><th className="p-2">Check-in</th></tr></thead><tbody>{list.map(p=>(<tr key={p.id} className="border-t border-[#2a2a2e]"><td className="p-2">{p.displayName} {p.sample&&<Pill color="#f59e0b">SAMPLE</Pill>}<div className="text-[10px] text-[#5f5b52]">{p.id}</div></td><td className="p-2 text-center text-xs">{p.team!=null?TEAMS[p.team].name.replace("House ",""):"—"}</td><td className="p-2 text-center text-xs gold">{p.missionNo||"—"}</td><td className="p-2 text-center text-xs">{(p.missionTier||0)}/3</td><td className="p-2 text-center gold font-bold">{p.ip}</td><td className="p-2 text-center"><button onClick={()=>checkIn(p.id)} className={`px-2 py-1 rounded text-xs font-semibold ${p.checkedIn?'bg-green-700 text-white':'border border-gold gold'}`}>{p.checkedIn?"✔ In":"Check in"}</button></td></tr>))}</tbody></table>{list.length===0&&<p className="text-center text-sm text-[#8a8578] p-4">No matches.</p>}</div>
-    <p className="text-[10px] text-[#8a8578] mt-2">Scorekeeper = the private door clipboard. Private fields (phone, email) stay hidden.</p></div>);
+    <div className="card p-2 overflow-auto"><table className="w-full text-sm"><thead><tr className="text-[#8a8578] text-xs"><th className="text-left p-2">Member</th><th className="p-2">House</th><th className="p-2">No.</th><th className="p-2">Missions</th><th className="p-2">IP</th><th className="p-2">Check-in</th></tr></thead><tbody>{list.map(p=>(<tr key={p.id} className="border-t border-[#2a2a2e]"><td className="p-2">{p.displayName} {p.sample&&<Pill color="#f59e0b">SAMPLE</Pill>}<div className="text-[10px] text-[#5f5b52]">{p.id}</div></td><td className="p-2 text-center text-xs">{p.team!=null?TEAMS[p.team].name.replace("House ",""):"—"}</td><td className="p-2 text-center text-xs gold">{p.missionNo||"—"}</td><td className="p-2 text-center text-xs">{(p.missionTier||0)}/3</td><td className="p-2 text-center gold font-bold">{p.ip}</td><td className="p-2 text-center"><button onClick={()=>checkIn(p.id)} className={`px-2 py-1 rounded text-xs font-semibold ${p.checkedIn?'bg-green-700 text-white':'border border-gold gold'}`}>{p.checkedIn?"✔ In":"Check in"}</button></td></tr>))}</tbody></table>{list.length===0&&<p className="text-center text-sm text-[#8a8578] p-4">No guests yet.</p>}</div></div>);
 }
 function KPI({label,value}){return <div className="card p-3 text-center"><div className="gold text-2xl font-bold">{value}</div><div className="text-[10px] text-[#8a8578]">{label}</div></div>;}
 function Scoreboard({state,update}){
@@ -752,11 +797,11 @@ function Scoreboard({state,update}){
   const teams=Array.from({length:tc},(_,i)=>({...TEAMS[i],idx:i,total:state.players.filter(p=>p.team===i).reduce((a,p)=>a+p.ip,0),members:state.players.filter(p=>p.team===i&&p.rsvp==="yes").length})).sort((a,b)=>b.total-a.total);
   const indiv=[...state.players].filter(p=>p.rsvp==="yes").sort((a,b)=>b.ip-a.ip);
   const chair=state.players.find(p=>p.status==="chair")||indiv[0];
-  if(reveal)return (<div className="text-center py-16 rise"><div className="text-6xl mb-4">👑</div><div className="text-[#8a8578] tracking-widest">THE CHAIR OF THE SYNDICATE</div><h1 className="gold text-5xl md:text-7xl font-black my-4">{chair?.displayName||"—"}</h1><div className="text-2xl">{chair?.ip} Influence</div><div className="mt-8"><Btn tone="dark" onClick={()=>update(n=>n.settings.revealWinner=false)}>Exit reveal</Btn></div></div>);
+  if(reveal)return (<div className="text-center py-16 rise"><div className="text-6xl mb-4">👑</div><div className="text-[#8a8578] tracking-widest">THE CHAIR OF THE SYNDICATE</div><h1 className="gold text-5xl md:text-7xl font-black my-4">{chair?chair.displayName:"—"}</h1><div className="text-2xl">{chair?chair.ip:0} Influence</div><div className="mt-8"><Btn tone="dark" onClick={()=>update(n=>n.settings.revealWinner=false)}>Exit reveal</Btn></div></div>);
   return (<div className={projector?"fixed inset-0 bg-black z-50 overflow-auto p-8":""}>
     <div className="flex justify-between items-center mb-4 flex-wrap gap-2"><div><h2 className="gold text-2xl font-black tracking-wider">LIVE STANDINGS</h2><div className="text-xs text-[#8a8578]">Round: {ROUND_FLOW[s.roundIndex]||"Registration"} {suspense&&"· 🔒 SUSPENSE"}</div></div><div className="flex gap-2"><Btn tone="dark" onClick={()=>update(n=>n.settings.suspense=!n.settings.suspense)}>{suspense?"Show totals":"Suspense mode"}</Btn><Btn tone="ghost" onClick={()=>setProjector(!projector)}>{projector?"Exit projector":"📺 Projector"}</Btn><Btn onClick={()=>update(n=>n.settings.revealWinner=true)}>👑 Reveal Chair</Btn></div></div>
     <div className="grid md:grid-cols-2 gap-4"><div className="card p-5"><h3 className="gold font-bold mb-3">🏛️ Houses</h3>{teams.map((h,i)=>(<div key={h.idx} className="flex items-center gap-3 py-2 border-b border-[#2a2a2e]"><div className="w-6 text-center font-bold gold">{i+1}</div><div className="w-3 h-6 rounded" style={{background:h.ring}}/><div className="flex-1">{h.name}<div className="text-[10px] text-[#8a8578]">{h.members} members {leaders[h.idx]&&"· leader 👑"}</div></div><div className="gold font-bold text-lg">{suspense?"•••":h.total}</div></div>))}</div>
-      <div className="card p-5"><h3 className="gold font-bold mb-3">🎯 Individuals (top 12)</h3>{indiv.slice(0,12).map((p,i)=>(<div key={p.id} className="flex items-center gap-3 py-1.5 border-b border-[#2a2a2e]"><div className="w-6 text-center font-bold gold">{i+1}</div><div className="flex-1 text-sm">{p.displayName}<span className="ml-1 text-[10px]">{p.status==="frozen"?"❄️":p.status==="qualified"?"✅":p.status==="finalist"?"⭐":""}</span></div><div className="text-xs text-[#8a8578]">{p.tokens}⚑</div><div className="gold font-bold">{suspense?"•••":p.ip}</div></div>))}</div></div>
+      <div className="card p-5"><h3 className="gold font-bold mb-3">🎯 Individuals (top 12)</h3>{indiv.length===0?<p className="text-xs text-[#8a8578]">No players yet.</p>:indiv.slice(0,12).map((p,i)=>(<div key={p.id} className="flex items-center gap-3 py-1.5 border-b border-[#2a2a2e]"><div className="w-6 text-center font-bold gold">{i+1}</div><div className="flex-1 text-sm">{p.displayName}<span className="ml-1 text-[10px]">{p.status==="frozen"?"❄️":p.status==="qualified"?"✅":p.status==="finalist"?"⭐":""}</span></div><div className="text-xs text-[#8a8578]">{p.tokens}⚑</div><div className="gold font-bold">{suspense?"•••":p.ip}</div></div>))}</div></div>
   </div>);
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
